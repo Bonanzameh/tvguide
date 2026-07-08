@@ -3,7 +3,7 @@ import path from 'node:path'
 
 const TVMAZE_BASE = 'https://api.tvmaze.com'
 const OMDB_BASE = 'https://www.omdbapi.com/'
-const CACHE_VERSION = 1
+const CACHE_VERSION = 2
 const DEFAULT_TIMEOUT_MS = 12000
 
 function normalizeKey(value = '') {
@@ -46,6 +46,11 @@ function readJson(file, fallback) {
 
 function writeJson(file, value) {
   fs.writeFileSync(file, JSON.stringify(value, null, 2))
+}
+
+function yearFromDate(value) {
+  const match = String(value || '').match(/^(\d{4})/)
+  return match ? match[1] : ''
 }
 
 async function fetchJson(url, options = {}) {
@@ -115,6 +120,7 @@ async function resolveTvMazeSeries(programme, cacheDir, budget, options = {}) {
     ratingSource: score ? 'TVmaze episode' : 'TVmaze',
     externalTitle: show.name || programme.title,
     externalEpisode: episode?.name || '',
+    year: yearFromDate(show.premiered),
     genres: Array.isArray(show.genres) ? show.genres : []
   }
 }
@@ -137,6 +143,7 @@ async function resolveOmdbMovie(programme, cacheDir, apiKey, budget, options = {
     rating: Number.isFinite(imdb) ? imdb : null,
     ratingSource: Number.isFinite(imdb) ? 'IMDb via OMDb' : 'OMDb',
     externalTitle: data.Title || programme.title,
+    year: yearFromDate(data.Year),
     genres: data.Genre ? data.Genre.split(',').map(item => item.trim()).filter(Boolean) : []
   }
 }
@@ -155,6 +162,7 @@ export async function enrichProgrammeMetadata(programmes, dataDir, options = {})
         media: {
           type: mediaType,
           label: mediaType === 'movie' ? 'M' : 'S',
+          year: programme.year || '',
           genre: mediaGenre(programme)
         }
       } : programme
@@ -204,6 +212,7 @@ export async function enrichProgrammeMetadata(programmes, dataDir, options = {})
         ratingColor: ratingColor(score),
         externalTitle: metadata?.externalTitle || '',
         externalEpisode: metadata?.externalEpisode || '',
+        year: metadata?.year || programme.year || '',
         genre: mediaGenre(programme, metadata)
       }
     })

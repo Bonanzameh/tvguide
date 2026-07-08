@@ -158,6 +158,7 @@ function toProgramme(item, channel, dateText) {
   const programme = item.program || {}
   const category = programme.translatedCategory?.nl || programme.category?.replace(/^C\./, '') || ''
   const categoryDetail = programme.translatedSubCategory?.nl || programme.subCategory?.replace(/^C\./, '') || ''
+  const year = programme.productionYear || programme.releaseYear || programme.year || null
   return {
     id: `pickx-${channel.id}-${item.programReferenceNumber || item.scheduleTrailId || item.programScheduleStart}`,
     channelId: channel.id,
@@ -166,6 +167,7 @@ function toProgramme(item, channel, dateText) {
     desc: programme.description || '',
     category,
     categoryDetail,
+    year,
     season: programme.seasonNumber || null,
     episode: programme.episodeNumber || null,
     start: start.toISOString(),

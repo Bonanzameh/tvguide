@@ -54,7 +54,7 @@ const sourceKey = JSON.stringify({
   ratingsMaxLookups,
   fetchTimeoutMs,
   omdb: Boolean(omdbApiKey),
-  version: 7
+  version: 8
 })
 
 ensureDataDir(dataDir)

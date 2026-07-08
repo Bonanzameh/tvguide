@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, RefreshCw, Search, Settings2 } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, Clock, Menu, RefreshCw, Search } from 'lucide-react'
 import './styles.css'
 
 const HOUR_WIDTH = 240
@@ -21,30 +21,35 @@ function formatDay(value) {
   return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }).format(new Date(`${value}T12:00:00`))
 }
 
-function sourceSummary(sources) {
-  if (!sources) return ''
-  const parts = []
-  if (sources.pickxEnabled) parts.push('Pickx')
-  if (sources.xmltvUrls.length) parts.push(`${sources.xmltvUrls.length} XMLTV`)
-  return parts.join(' + ')
+function seasonEpisode(programme) {
+  if (!programme?.season || !programme?.episode) return ''
+  return `S${String(programme.season).padStart(2, '0')}E${String(programme.episode).padStart(2, '0')}`
+}
+
+function detailMeta(programme) {
+  if (!programme) return []
+  const items = [
+    seasonEpisode(programme),
+    programme.media?.year || programme.year || '',
+    programme.media?.rating ? `${programme.media.rating}/10` : '',
+    programme.media?.genre || '',
+    programme.category || ''
+  ].filter(Boolean)
+  return [...new Set(items)]
 }
 
 function App() {
   const [date, setDate] = useState(dateKey(new Date()))
   const [guide, setGuide] = useState(null)
-  const [sources, setSources] = useState(null)
   const [selected, setSelected] = useState(null)
   const [query, setQuery] = useState('')
   const [group, setGroup] = useState('All')
+  const [groupMenuOpen, setGroupMenuOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const headerRef = useRef(null)
   const gridRef = useRef(null)
   const channelListRef = useRef(null)
-
-  useEffect(() => {
-    fetch('/api/sources').then(res => res.json()).then(setSources).catch(() => {})
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -125,12 +130,48 @@ function App() {
     gridRef.current.scrollLeft += event.deltaX
   }
 
+  function chooseGroup(item) {
+    setGroup(item)
+    setGroupMenuOpen(false)
+  }
+
   return (
     <main className="shell">
       <header className="topbar">
         <div className="title-block">
           <p className="eyebrow">Orange TV Go lineup workspace</p>
           <h1>Belgian TV Guide</h1>
+          <div className="title-controls">
+            <label className="search">
+              <Search size={17} />
+              <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search channel" />
+            </label>
+            <div className="control-row">
+              <button className="icon-button" onClick={() => moveDate(-1)} aria-label="Previous day"><ChevronLeft size={18} /></button>
+              <button className="date-button"><CalendarDays size={17} />{formatDay(date)}</button>
+              <button className="icon-button" onClick={() => moveDate(1)} aria-label="Next day"><ChevronRight size={18} /></button>
+              <button className="icon-button" onClick={refresh} aria-label="Refresh guide"><RefreshCw size={18} /></button>
+              <div className="group-menu">
+                <button
+                  className={`icon-button ${groupMenuOpen ? 'active' : ''}`}
+                  onClick={() => setGroupMenuOpen(open => !open)}
+                  aria-label="Choose channel group"
+                  aria-expanded={groupMenuOpen}
+                >
+                  <Menu size={18} />
+                </button>
+                {groupMenuOpen ? (
+                  <div className="group-panel">
+                    {groups.map(item => (
+                      <button key={item} className={item === group ? 'active' : ''} onClick={() => chooseGroup(item)}>
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
         </div>
         <section className="selected-strip" aria-live="polite">
           {selected ? (
@@ -142,38 +183,14 @@ function App() {
                 <p>{selected.desc || 'No description available from this source.'}</p>
               </div>
               <div className="meta">
-                {selected.media?.type ? (
-                  <span>{selected.media.type === 'movie' ? 'Movie' : 'Series'}{selected.media.rating ? ` ${selected.media.rating}/10` : ''}</span>
-                ) : null}
-                {selected.media?.genre ? <span>{selected.media.genre}</span> : null}
-                <span>{selected.category || 'Programme'}</span>
-                <span>{selected.source}</span>
+                {detailMeta(selected).map(item => <span key={item}>{item}</span>)}
               </div>
             </>
           ) : (
             <p className="empty-detail">Select a programme slot to see details.</p>
           )}
         </section>
-        <div className="top-actions">
-          <button className="icon-button" onClick={() => moveDate(-1)} aria-label="Previous day"><ChevronLeft size={18} /></button>
-          <button className="date-button"><CalendarDays size={17} />{formatDay(date)}</button>
-          <button className="icon-button" onClick={() => moveDate(1)} aria-label="Next day"><ChevronRight size={18} /></button>
-          <button className="icon-button" onClick={refresh} aria-label="Refresh guide"><RefreshCw size={18} /></button>
-        </div>
       </header>
-
-      <section className="controls">
-        <label className="search">
-          <Search size={17} />
-          <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search channel" />
-        </label>
-        <div className="segments">
-          {groups.map(item => (
-            <button key={item} className={item === group ? 'active' : ''} onClick={() => setGroup(item)}>{item}</button>
-          ))}
-        </div>
-        <div className="source-pill"><Settings2 size={16} />{guide?.source || 'Loading'}</div>
-      </section>
 
       {error && <div className="notice danger">{error}</div>}
       {guide?.errors?.length ? (
@@ -231,7 +248,6 @@ function App() {
         </div>
       </section>
 
-      {sources ? <div className="source-note">Sources: {sourceSummary(sources)}</div> : null}
       {loading ? <div className="loading">Loading guide...</div> : null}
     </main>
   )

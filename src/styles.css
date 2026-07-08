@@ -34,7 +34,6 @@ input {
 }
 
 .topbar,
-.controls,
 .workspace {
   width: 100%;
   max-width: none;
@@ -43,12 +42,13 @@ input {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(210px, 280px) minmax(360px, 1fr) auto;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
   align-items: start;
   gap: 18px;
 }
 
 .title-block {
+  position: relative;
   min-width: 0;
 }
 
@@ -65,29 +65,35 @@ h1 {
   font-size: 2rem;
 }
 
-.top-actions,
-.controls,
-.segments {
+.control-row,
+.title-controls {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.top-actions {
-  justify-content: flex-end;
+.title-controls {
+  margin-top: 14px;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.control-row {
+  flex-wrap: wrap;
 }
 
 .selected-strip {
   min-width: 0;
-  min-height: 118px;
+  height: 154px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) minmax(180px, auto);
   align-items: start;
   gap: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
   padding: 14px 16px;
+  overflow: hidden;
 }
 
 .selected-copy {
@@ -96,6 +102,9 @@ h1 {
 
 .selected-copy h2 {
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 1.24rem;
 }
 
@@ -119,9 +128,7 @@ h1 {
 }
 
 .icon-button,
-.date-button,
-.segments button,
-.source-pill {
+.date-button {
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--text);
@@ -136,26 +143,28 @@ h1 {
   cursor: pointer;
 }
 
-.date-button,
-.source-pill {
+.icon-button.active,
+.group-panel .active {
+  border-color: var(--orange);
+  color: #111;
+  background: var(--orange);
+}
+
+.date-button {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   border-radius: 8px;
   padding: 0 13px;
-}
-
-.controls {
-  margin-top: 18px;
-  flex-wrap: wrap;
+  min-width: 134px;
 }
 
 .search {
   display: flex;
   align-items: center;
   gap: 9px;
-  width: min(320px, 100%);
-  height: 42px;
+  width: 100%;
+  height: 40px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 0 12px;
@@ -170,28 +179,40 @@ h1 {
   color: var(--text);
 }
 
-.segments {
-  overflow-x: auto;
-  max-width: 100%;
+.group-menu {
+  position: relative;
 }
 
-.segments button {
-  height: 40px;
-  padding: 0 13px;
+.group-panel {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 220px;
+  max-height: min(420px, 70vh);
+  overflow-y: auto;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  white-space: nowrap;
+  background: var(--panel);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+  padding: 6px;
+}
+
+.group-panel button {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  padding: 0 10px;
+  text-align: left;
   cursor: pointer;
 }
 
-.segments .active {
-  border-color: var(--orange);
-  color: #111;
-  background: var(--orange);
-}
-
-.source-pill {
-  color: var(--muted);
-  margin-left: auto;
+.group-panel button:not(.active):hover {
+  border-color: var(--line);
+  background: var(--panel-2);
 }
 
 .workspace {
@@ -200,7 +221,7 @@ h1 {
 
 .guide {
   display: grid;
-  grid-template-rows: 48px minmax(520px, calc(100vh - 270px));
+  grid-template-rows: 48px minmax(520px, calc(100vh - 260px));
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -447,8 +468,7 @@ h1 {
 }
 
 .detail-time,
-.meta,
-.source-note {
+.meta {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -472,13 +492,6 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 5px 9px;
-}
-
-.source-note {
-  width: 100%;
-  max-width: none;
-  margin: 10px auto 0;
-  align-items: flex-start;
 }
 
 .notice {
@@ -526,15 +539,13 @@ h1 {
     grid-template-columns: 1fr;
   }
 
-  .source-pill {
-    margin-left: 0;
-  }
-
   .guide {
     grid-template-columns: 170px minmax(0, 1fr) !important;
   }
 
   .selected-strip {
+    height: auto;
+    min-height: 154px;
     grid-template-columns: 1fr;
   }
 
