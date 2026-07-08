@@ -33,7 +33,7 @@ const sourceKey = JSON.stringify({
   ratingsEnabled,
   ratingsMaxLookups,
   omdb: Boolean(omdbApiKey),
-  version: 4
+  version: 5
 })
 
 ensureDataDir(dataDir)
@@ -131,7 +131,9 @@ async function loadGuide(dateText, force = false) {
     }
   }
 
-  fs.writeFileSync(target, JSON.stringify(guide, null, 2))
+  if (guide.programmes.length || !guide.errors.length) {
+    fs.writeFileSync(target, JSON.stringify(guide, null, 2))
+  }
   return guide
 }
 

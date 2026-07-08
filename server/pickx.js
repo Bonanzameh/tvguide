@@ -9,6 +9,15 @@ const headers = {
   'user-agent': 'BelgianTVGuide/0.2'
 }
 
+function describeFetchError(url, error) {
+  const details = [
+    error.message,
+    error.cause?.code,
+    error.cause?.message
+  ].filter(Boolean).join(' - ')
+  return `${url} failed: ${details || 'unknown network error'}`
+}
+
 function normalize(value = '') {
   return value
     .toLowerCase()
@@ -31,16 +40,26 @@ function dayBounds(dateText) {
 }
 
 async function fetchJson(url, options = {}) {
-  const response = await fetch(url, {
-    ...options,
-    headers: { ...headers, ...(options.headers || {}) }
-  })
+  let response
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: { ...headers, ...(options.headers || {}) }
+    })
+  } catch (error) {
+    throw new Error(describeFetchError(url, error))
+  }
   if (!response.ok) throw new Error(`${url} returned ${response.status}`)
   return response.json()
 }
 
 async function fetchApiVersion() {
-  const response = await fetch(PICKX_GUIDE_URL, { headers })
+  let response
+  try {
+    response = await fetch(PICKX_GUIDE_URL, { headers })
+  } catch (error) {
+    throw new Error(describeFetchError(PICKX_GUIDE_URL, error))
+  }
   if (!response.ok) throw new Error(`Pickx guide page returned ${response.status}`)
   const html = await response.text()
   const hash = html.match(/"hashes":\["([^"]+)"\]/)?.[1]

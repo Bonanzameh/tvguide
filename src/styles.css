@@ -451,6 +451,15 @@ h1 {
   padding: 10px 12px;
 }
 
+.notice span {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  color: inherit;
+  opacity: 0.82;
+  font-size: 0.82rem;
+}
+
 .notice.danger {
   border-color: var(--red);
   color: #ffd2cc;

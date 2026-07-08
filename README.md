@@ -55,3 +55,7 @@ Restart the container after changing the file.
 - `EPG_RATINGS_ENABLED`: `true` by default. Adds movie/series badges and cached rating lookups.
 - `EPG_RATINGS_MAX_LOOKUPS`: maximum external rating lookups per guide refresh. Defaults to `80`; cached results do not count.
 - `OMDB_API_KEY`: optional. Enables IMDb-style movie ratings through OMDb. Series episode ratings use TVMaze where a matching episode can be found.
+
+## Troubleshooting
+
+If the guide is empty and the UI reports that a source failed, check `/api/guide` for the `errors` array. If Pickx is blocked from your Docker host and `EPG_XMLTV_URLS` is set to `none`, there is no fallback source. Remove that `none` value or set `EPG_XMLTV_URLS` to a working XMLTV URL/file, then refresh the guide.

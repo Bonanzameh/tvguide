@@ -146,7 +146,14 @@ function App() {
       </section>
 
       {error && <div className="notice danger">{error}</div>}
-      {guide?.errors?.length ? <div className="notice">Some guide sources failed; available real sources are still shown.</div> : null}
+      {guide?.errors?.length ? (
+        <div className={guide?.stats?.programmes ? 'notice' : 'notice danger'}>
+          {guide?.stats?.programmes
+            ? 'Some guide sources failed; available real sources are still shown.'
+            : 'No programme data loaded. Check the configured guide source network access.'}
+          <span>{guide.errors.map(item => `${item.source}: ${item.message}`).join(' | ')}</span>
+        </div>
+      ) : null}
 
       <section className="workspace">
         <div className="guide">
