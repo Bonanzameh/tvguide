@@ -7,8 +7,11 @@ services:
       PORT: "3000"
       DATA_DIR: /data
       # Add one or more comma-separated XMLTV URLs or mounted file URLs when ready.
-      # Example: file:///data/guide.xml.gz,https://epg.pw/xmltv/epg.xml.gz
+      # Empty means the public epg.pw XMLTV feed is used as a supplement.
+      # Use "none" to disable XMLTV and only use Pickx.
       EPG_XMLTV_URLS: ""
+      EPG_PICKX_ENABLED: "true"
+      EPG_SAMPLE_FALLBACK: "false"
       EPG_TIMEZONE: Europe/Brussels
     volumes:
       - tv-guide-data:/data

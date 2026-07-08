@@ -6,6 +6,8 @@ import cors from 'cors'
 import { fileURLToPath } from 'node:url'
 import { defaultChannels } from './channels.js'
 import { createSampleGuide } from './sampleGuide.js'
+import { enrichChannelLogos } from './logos.js'
+import { fetchPickxGuide } from './pickx.js'
 import { ensureDataDir, parseXmltvSources } from './xmltv.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -13,7 +15,14 @@ const app = express()
 const port = Number(process.env.PORT || 3000)
 const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data')
 const timezone = process.env.EPG_TIMEZONE || 'Europe/Brussels'
-const xmltvUrls = (process.env.EPG_XMLTV_URLS || '').split(',').map(url => url.trim()).filter(Boolean)
+const defaultXmltvUrl = 'https://epg.pw/xmltv/epg.xml.gz'
+const xmltvSetting = process.env.EPG_XMLTV_URLS
+const xmltvUrls = (!xmltvSetting || !xmltvSetting.trim())
+  ? [defaultXmltvUrl]
+  : xmltvSetting.split(',').map(url => url.trim()).filter(url => url && url.toLowerCase() !== 'none')
+const pickxEnabled = process.env.EPG_PICKX_ENABLED !== 'false'
+const sampleFallbackEnabled = process.env.EPG_SAMPLE_FALLBACK === 'true'
+const sourceKey = JSON.stringify({ pickxEnabled, xmltvUrls, sampleFallbackEnabled, version: 3 })
 
 ensureDataDir(dataDir)
 
@@ -43,24 +52,63 @@ function cachePath(dateText) {
 }
 
 async function loadGuide(dateText, force = false) {
-  const channels = loadChannels()
+  const channels = await enrichChannelLogos(loadChannels(), dataDir)
   const target = cachePath(dateText)
   if (!force && fs.existsSync(target)) {
-    return JSON.parse(fs.readFileSync(target, 'utf8'))
+    const cached = JSON.parse(fs.readFileSync(target, 'utf8'))
+    if (cached.sourceKey === sourceKey) return cached
   }
 
-  let guide
-  if (xmltvUrls.length) {
-    const parsed = await parseXmltvSources(xmltvUrls, channels, dateText)
-    guide = {
-      source: parsed.programmes.length ? 'XMLTV' : 'Sample Belgian starter guide',
-      generatedAt: new Date().toISOString(),
-      channels: parsed.channels,
-      programmes: parsed.programmes.length ? parsed.programmes : createSampleGuide(channels, dateText).programmes,
-      errors: parsed.errors
+  const errors = []
+  let guideChannels = channels
+  const programmes = new Map()
+
+  if (pickxEnabled) {
+    try {
+      const pickx = await fetchPickxGuide(guideChannels, dateText)
+      guideChannels = pickx.channels
+      for (const programme of pickx.programmes) {
+        programmes.set(`${programme.channelId}-${programme.start}-${programme.stop}`, programme)
+      }
+    } catch (error) {
+      errors.push({ source: 'Pickx', message: error.message })
     }
-  } else {
-    guide = createSampleGuide(channels, dateText)
+  }
+
+  if (xmltvUrls.length) {
+    const parsed = await parseXmltvSources(xmltvUrls, guideChannels, dateText)
+    guideChannels = parsed.channels
+    for (const programme of parsed.programmes) {
+      const key = `${programme.channelId}-${programme.start}-${programme.stop}`
+      if (!programmes.has(key)) programmes.set(key, programme)
+    }
+    errors.push(...parsed.errors.map(error => ({ source: 'XMLTV', ...error })))
+  }
+
+  const programmeList = [...programmes.values()].sort((a, b) => a.start.localeCompare(b.start))
+  let source = [
+    pickxEnabled ? 'Pickx' : '',
+    xmltvUrls.length ? 'XMLTV' : ''
+  ].filter(Boolean).join(' + ')
+
+  let finalProgrammes = programmeList
+  if (!finalProgrammes.length && sampleFallbackEnabled) {
+    source = 'Sample Belgian starter guide'
+    finalProgrammes = createSampleGuide(guideChannels, dateText).programmes
+  }
+
+  const guide = {
+    source: finalProgrammes.length ? source : `${source || 'No sources'} (no programmes found)`,
+    sourceKey,
+    generatedAt: new Date().toISOString(),
+    channels: guideChannels,
+    programmes: finalProgrammes,
+    errors,
+    stats: {
+      channels: guideChannels.length,
+      channelsWithProgrammes: new Set(finalProgrammes.map(programme => programme.channelId)).size,
+      programmes: finalProgrammes.length
+    }
   }
 
   fs.writeFileSync(target, JSON.stringify(guide, null, 2))
@@ -71,6 +119,8 @@ app.get('/api/sources', (req, res) => {
   res.json({
     timezone,
     xmltvUrls,
+    pickxEnabled,
+    sampleFallbackEnabled,
     orange: {
       status: 'available-for-local-adapter',
       endpoint: 'https://client.titan.sdscloud.orange.be/secure/v1/graphql',

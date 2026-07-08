@@ -32,6 +32,7 @@ function App() {
   const [error, setError] = useState('')
   const headerRef = useRef(null)
   const gridRef = useRef(null)
+  const channelListRef = useRef(null)
 
   useEffect(() => {
     fetch('/api/sources').then(res => res.json()).then(setSources).catch(() => {})
@@ -105,6 +106,17 @@ function App() {
     if (headerRef.current) headerRef.current.scrollLeft = gridRef.current.scrollLeft
   }, [date, loading])
 
+  function syncScroll(event) {
+    if (headerRef.current) headerRef.current.scrollLeft = event.currentTarget.scrollLeft
+    if (channelListRef.current) channelListRef.current.scrollTop = event.currentTarget.scrollTop
+  }
+
+  function scrollGridFromChannels(event) {
+    if (!gridRef.current) return
+    gridRef.current.scrollTop += event.deltaY
+    gridRef.current.scrollLeft += event.deltaX
+  }
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -134,7 +146,7 @@ function App() {
       </section>
 
       {error && <div className="notice danger">{error}</div>}
-      {guide?.errors?.length ? <div className="notice">Some XMLTV sources failed; sample or other sources are still shown.</div> : null}
+      {guide?.errors?.length ? <div className="notice">Some guide sources failed; available real sources are still shown.</div> : null}
 
       <section className="workspace">
         <div className="guide">
@@ -145,34 +157,37 @@ function App() {
             </div>
           </div>
 
-          <div className="channel-list">
+          <div className="channel-list" ref={channelListRef} onWheel={scrollGridFromChannels}>
             {filteredChannels.map(channel => (
               <div className="channel-cell" key={channel.id} style={{ height: ROW_HEIGHT }}>
-                {channel.icon ? <img src={channel.icon} alt="" /> : <div className="logo-fallback">{channel.name.slice(0, 2)}</div>}
+                {channel.icon || channel.logo ? <img src={channel.icon || channel.logo} alt="" /> : <div className="logo-fallback">{channel.name.slice(0, 2)}</div>}
                 <div>
+                  {channel.number ? <span className="channel-number">{channel.number}</span> : null}
                   <strong>{channel.name}</strong>
-                  <span>{channel.group}</span>
+                  <span>{channel.sourceName || channel.group}</span>
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="program-grid" ref={gridRef} onScroll={event => {
-            if (headerRef.current) headerRef.current.scrollLeft = event.currentTarget.scrollLeft
-          }}>
+          <div className="program-grid" ref={gridRef} onScroll={syncScroll}>
             <div className="grid-inner" style={{ width: 24 * HOUR_WIDTH, height: filteredChannels.length * ROW_HEIGHT }}>
               {date === dateKey(new Date()) ? <div className="now-line" style={{ left: nowOffset }} /> : null}
               {filteredChannels.map((channel, rowIndex) => (
                 <div className="row-line" key={channel.id} style={{ top: rowIndex * ROW_HEIGHT, height: ROW_HEIGHT }}>
-                  {(programmesByChannel.get(channel.id) || []).map(programme => (
-                    <ProgrammeSlot
-                      key={programme.id}
-                      programme={programme}
-                      dayStart={dayStart}
-                      selected={selected?.id === programme.id}
-                      onClick={() => setSelected(programme)}
-                    />
-                  ))}
+                  {(programmesByChannel.get(channel.id) || []).length ? (
+                    (programmesByChannel.get(channel.id) || []).map(programme => (
+                      <ProgrammeSlot
+                        key={programme.id}
+                        programme={programme}
+                        dayStart={dayStart}
+                        selected={selected?.id === programme.id}
+                        onClick={() => setSelected(programme)}
+                      />
+                    ))
+                  ) : (
+                    <div className="empty-slot">No programme data from configured sources</div>
+                  )}
                 </div>
               ))}
             </div>
@@ -194,7 +209,7 @@ function App() {
           ) : (
             <p>Select a programme slot to see details here.</p>
           )}
-          {sources ? <div className="source-note">Orange endpoint noted; XMLTV URLs configured: {sources.xmltvUrls.length || 0}</div> : null}
+          {sources ? <div className="source-note">Sources: {sources.pickxEnabled ? 'Pickx' : ''}{sources.pickxEnabled && sources.xmltvUrls.length ? ' + ' : ''}{sources.xmltvUrls.length ? `${sources.xmltvUrls.length} XMLTV` : ''}</div> : null}
         </aside>
       </section>
 

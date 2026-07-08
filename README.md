@@ -10,7 +10,9 @@ docker compose up --build
 
 Open http://localhost:3000.
 
-The app starts with deterministic Belgian sample guide data so the UI works immediately. To ingest real XMLTV data, set `EPG_XMLTV_URLS` in `docker-compose.yml` or mount a file:
+The app fetches real guide data from the public Proximus Pickx EPG endpoint by default, then supplements it with XMLTV when configured. If `EPG_XMLTV_URLS` is empty, the app uses the public epg.pw XMLTV feed as a supplemental source. Use `EPG_XMLTV_URLS=none` to disable XMLTV and only use Pickx.
+
+To ingest your own XMLTV data, set `EPG_XMLTV_URLS` in `docker-compose.yml` or mount a file:
 
 ```yaml
 environment:
@@ -21,6 +23,7 @@ environment:
 
 Useful Belgian EPG sources found while setting this up:
 
+- Proximus Pickx public EPG: used as the default source because it has a broad Belgian/Flemish channel lineup and real programme descriptions.
 - Orange TV Go: the web app uses Orange/SDS GraphQL at `https://client.titan.sdscloud.orange.be/secure/v1/graphql`, with OAuth/AWS session handling. The app is ready for an Orange adapter, but it does not store or request your TV Go credentials.
 - iptv-org/epg: active scrapers for `pickx.be`, `mon-programme-tv.be`, `vrt.be`, and `vtm.be`. You can generate XMLTV with that project and mount the result into `/data`.
 - epg.pw: public all-in-one XMLTV feed at `https://epg.pw/xmltv/epg.xml.gz`. It is large, so the app filters it down to your configured Belgian channel names.
@@ -43,3 +46,9 @@ Create `/data/channels.json` in the container volume to override the starter lin
 ```
 
 Restart the container after changing the file.
+
+## Environment
+
+- `EPG_PICKX_ENABLED`: `true` by default. Set to `false` to skip Pickx.
+- `EPG_XMLTV_URLS`: empty uses `https://epg.pw/xmltv/epg.xml.gz`; comma-separated URLs or `file:///data/guide.xml.gz` are supported; `none` disables XMLTV.
+- `EPG_SAMPLE_FALLBACK`: `false` by default. Set to `true` if you want generated demo data when all real sources fail.

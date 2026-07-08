@@ -230,6 +230,13 @@ h1 {
   white-space: nowrap;
 }
 
+.channel-number {
+  color: var(--orange) !important;
+  font-size: 0.68rem !important;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
 .channel-cell strong {
   font-size: 0.92rem;
 }
@@ -270,6 +277,25 @@ h1 {
   color: var(--text);
   background: #273039;
   cursor: pointer;
+}
+
+.empty-slot {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 13px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px dashed #3a454d;
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .slot:hover,
