@@ -52,3 +52,6 @@ Restart the container after changing the file.
 - `EPG_PICKX_ENABLED`: `true` by default. Set to `false` to skip Pickx.
 - `EPG_XMLTV_URLS`: empty uses `https://epg.pw/xmltv/epg.xml.gz`; comma-separated URLs or `file:///data/guide.xml.gz` are supported; `none` disables XMLTV.
 - `EPG_SAMPLE_FALLBACK`: `false` by default. Set to `true` if you want generated demo data when all real sources fail.
+- `EPG_RATINGS_ENABLED`: `true` by default. Adds movie/series badges and cached rating lookups.
+- `EPG_RATINGS_MAX_LOOKUPS`: maximum external rating lookups per guide refresh. Defaults to `80`; cached results do not count.
+- `OMDB_API_KEY`: optional. Enables IMDb-style movie ratings through OMDb. Series episode ratings use TVMaze where a matching episode can be found.

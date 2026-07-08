@@ -8,6 +8,7 @@ import { defaultChannels } from './channels.js'
 import { createSampleGuide } from './sampleGuide.js'
 import { enrichChannelLogos } from './logos.js'
 import { fetchPickxGuide } from './pickx.js'
+import { enrichProgrammeMetadata } from './ratings.js'
 import { ensureDataDir, parseXmltvSources } from './xmltv.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -22,7 +23,18 @@ const xmltvUrls = (!xmltvSetting || !xmltvSetting.trim())
   : xmltvSetting.split(',').map(url => url.trim()).filter(url => url && url.toLowerCase() !== 'none')
 const pickxEnabled = process.env.EPG_PICKX_ENABLED !== 'false'
 const sampleFallbackEnabled = process.env.EPG_SAMPLE_FALLBACK === 'true'
-const sourceKey = JSON.stringify({ pickxEnabled, xmltvUrls, sampleFallbackEnabled, version: 3 })
+const ratingsEnabled = process.env.EPG_RATINGS_ENABLED !== 'false'
+const ratingsMaxLookups = Number(process.env.EPG_RATINGS_MAX_LOOKUPS || 80)
+const omdbApiKey = process.env.OMDB_API_KEY || ''
+const sourceKey = JSON.stringify({
+  pickxEnabled,
+  xmltvUrls,
+  sampleFallbackEnabled,
+  ratingsEnabled,
+  ratingsMaxLookups,
+  omdb: Boolean(omdbApiKey),
+  version: 4
+})
 
 ensureDataDir(dataDir)
 
@@ -97,6 +109,12 @@ async function loadGuide(dateText, force = false) {
     finalProgrammes = createSampleGuide(guideChannels, dateText).programmes
   }
 
+  finalProgrammes = await enrichProgrammeMetadata(finalProgrammes, dataDir, {
+    enabled: ratingsEnabled,
+    maxLookups: ratingsMaxLookups,
+    omdbApiKey
+  })
+
   const guide = {
     source: finalProgrammes.length ? source : `${source || 'No sources'} (no programmes found)`,
     sourceKey,
@@ -107,7 +125,9 @@ async function loadGuide(dateText, force = false) {
     stats: {
       channels: guideChannels.length,
       channelsWithProgrammes: new Set(finalProgrammes.map(programme => programme.channelId)).size,
-      programmes: finalProgrammes.length
+      programmes: finalProgrammes.length,
+      mediaProgrammes: finalProgrammes.filter(programme => programme.media?.type).length,
+      ratedProgrammes: finalProgrammes.filter(programme => programme.media?.rating).length
     }
   }
 
@@ -121,6 +141,9 @@ app.get('/api/sources', (req, res) => {
     xmltvUrls,
     pickxEnabled,
     sampleFallbackEnabled,
+    ratingsEnabled,
+    ratingsMaxLookups,
+    omdbEnabled: Boolean(omdbApiKey),
     orange: {
       status: 'available-for-local-adapter',
       endpoint: 'https://client.titan.sdscloud.orange.be/secure/v1/graphql',

@@ -272,7 +272,7 @@ h1 {
   overflow: hidden;
   border: 1px solid #3a454d;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 7px 31px 7px 10px;
   text-align: left;
   color: var(--text);
   background: #273039;
@@ -309,7 +309,8 @@ h1 {
 }
 
 .slot strong,
-.slot span {
+.slot span,
+.slot em {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -322,9 +323,61 @@ h1 {
 }
 
 .slot span {
-  margin-top: 4px;
+  margin-top: 2px;
   color: var(--muted);
   font-size: 0.74rem;
+}
+
+.slot em {
+  margin-top: 2px;
+  color: #b8cfd5;
+  font-size: 0.68rem;
+  font-style: normal;
+}
+
+.media-badge {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  width: 20px;
+  height: 20px;
+  display: grid !important;
+  place-items: center;
+  border-radius: 999px;
+  color: #101316 !important;
+  font-size: 0.68rem !important;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.rating-neutral {
+  background: #7f8990;
+}
+
+.rating-red {
+  background: #e34f43;
+}
+
+.rating-orange {
+  background: #ff8c32;
+}
+
+.rating-yellow {
+  background: #f2d35d;
+}
+
+.rating-light-green {
+  background: #9be36f;
+}
+
+.rating-dark-green {
+  background: #178947;
+  color: #f7fff9 !important;
+}
+
+.rating-pink {
+  background: #ff4fb8;
 }
 
 .now-line {

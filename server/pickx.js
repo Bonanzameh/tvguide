@@ -126,6 +126,7 @@ function toProgramme(item, channel, dateText) {
 
   const programme = item.program || {}
   const category = programme.translatedCategory?.nl || programme.category?.replace(/^C\./, '') || ''
+  const categoryDetail = programme.translatedSubCategory?.nl || programme.subCategory?.replace(/^C\./, '') || ''
   return {
     id: `pickx-${channel.id}-${item.programReferenceNumber || item.scheduleTrailId || item.programScheduleStart}`,
     channelId: channel.id,
@@ -133,6 +134,9 @@ function toProgramme(item, channel, dateText) {
     subtitle: programme.episodeTitle || '',
     desc: programme.description || '',
     category,
+    categoryDetail,
+    season: programme.seasonNumber || null,
+    episode: programme.episodeNumber || null,
     start: start.toISOString(),
     stop: stop.toISOString(),
     image: programme.posterFileName

@@ -202,6 +202,10 @@ function App() {
               {selected.subtitle ? <p className="subtitle">{selected.subtitle}</p> : null}
               <p>{selected.desc || 'No description available from this source.'}</p>
               <div className="meta">
+                {selected.media?.type ? (
+                  <span>{selected.media.type === 'movie' ? 'Movie' : 'Series'}{selected.media.rating ? ` ${selected.media.rating}/10` : ''}</span>
+                ) : null}
+                {selected.media?.genre ? <span>{selected.media.genre}</span> : null}
                 <span>{selected.category || 'Programme'}</span>
                 <span>{selected.source}</span>
               </div>
@@ -230,8 +234,19 @@ function ProgrammeSlot({ programme, dayStart, selected, onClick }) {
   const width = Math.max(34, ((stop.getTime() - start.getTime()) / 3600000) * HOUR_WIDTH - 4)
   return (
     <button className={`slot ${selected ? 'selected' : ''} ${isNow(programme) ? 'now' : ''}`} style={{ left, width }} onClick={onClick}>
+      {programme.media?.type ? (
+        <span
+          className={`media-badge rating-${programme.media.ratingColor || 'neutral'}`}
+          title={`${programme.media.type === 'movie' ? 'Movie' : 'Series'}${programme.media.rating ? ` - ${programme.media.rating}/10` : ''}`}
+        >
+          {programme.media.label}
+        </span>
+      ) : null}
       <strong>{programme.title}</strong>
       <span>{formatTime(programme.start)} - {formatTime(programme.stop)}</span>
+      {(programme.media?.genre || programme.categoryDetail || programme.category) ? (
+        <em>{programme.media?.genre || programme.categoryDetail || programme.category}</em>
+      ) : null}
     </button>
   )
 }
