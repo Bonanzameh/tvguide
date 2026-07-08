@@ -26,16 +26,38 @@ function seasonEpisode(programme) {
   return `S${String(programme.season).padStart(2, '0')}E${String(programme.episode).padStart(2, '0')}`
 }
 
+function isRedundantMediaCategory(programme, value) {
+  const normalized = String(value || '').toLowerCase()
+  if (programme.media?.type === 'series') return ['serie', 'series'].includes(normalized)
+  if (programme.media?.type === 'movie') return ['film', 'films', 'movie', 'movies'].includes(normalized)
+  return false
+}
+
 function detailMeta(programme) {
   if (!programme) return []
-  const items = [
-    seasonEpisode(programme),
-    programme.media?.year || programme.year || '',
-    programme.media?.rating ? `${programme.media.rating}/10` : '',
-    programme.media?.genre || '',
-    programme.category || ''
-  ].filter(Boolean)
-  return [...new Set(items)]
+  const items = []
+  const episode = seasonEpisode(programme)
+  const year = programme.media?.year || programme.year || ''
+  if (episode) items.push({ label: episode })
+  if (year) items.push({ label: year })
+  if (programme.media?.rating) {
+    items.push({
+      label: `${programme.media.rating}/10`,
+      className: `score-pill rating-${programme.media.ratingColor || 'neutral'}`
+    })
+  }
+  if (programme.media?.genre) items.push({ label: programme.media.genre })
+  if (programme.category && !isRedundantMediaCategory(programme, programme.category)) {
+    items.push({ label: programme.category })
+  }
+
+  const seen = new Set()
+  return items.filter(item => {
+    const key = item.label.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function App() {
@@ -176,14 +198,16 @@ function App() {
         <section className="selected-strip" aria-live="polite">
           {selected ? (
             <>
-              <div className="detail-time"><Clock size={16} />{formatTime(selected.start)} - {formatTime(selected.stop)}</div>
+              <div className="detail-rail">
+                <div className="detail-time"><Clock size={16} />{formatTime(selected.start)} - {formatTime(selected.stop)}</div>
+                <div className="meta">
+                  {detailMeta(selected).map(item => <span key={item.label} className={item.className || ''}>{item.label}</span>)}
+                </div>
+              </div>
               <div className="selected-copy">
                 <h2>{selected.title}</h2>
                 {selected.subtitle ? <p className="subtitle">{selected.subtitle}</p> : null}
                 <p>{selected.desc || 'No description available from this source.'}</p>
-              </div>
-              <div className="meta">
-                {detailMeta(selected).map(item => <span key={item}>{item}</span>)}
               </div>
             </>
           ) : (
