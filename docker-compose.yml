@@ -1,0 +1,17 @@
+services:
+  tv-guide:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      DATA_DIR: /data
+      # Add one or more comma-separated XMLTV URLs or mounted file URLs when ready.
+      # Example: file:///data/guide.xml.gz,https://epg.pw/xmltv/epg.xml.gz
+      EPG_XMLTV_URLS: ""
+      EPG_TIMEZONE: Europe/Brussels
+    volumes:
+      - tv-guide-data:/data
+
+volumes:
+  tv-guide-data:
