@@ -56,6 +56,22 @@ Restart the container after changing the file.
 - `EPG_RATINGS_ENABLED`: `true` by default. Adds movie/series badges and cached rating lookups.
 - `EPG_RATINGS_MAX_LOOKUPS`: maximum external rating lookups per guide refresh. Defaults to `80`; cached results do not count.
 - `OMDB_API_KEY`: optional. Enables IMDb-style movie ratings through OMDb. Series episode ratings use TVMaze where a matching episode can be found.
+- `EPG_PREFETCH_DAYS`: number of guide days to keep warm in cache. Defaults to `3`.
+- `EPG_PREFETCH_INTERVAL_HOURS`: automatic cache refresh interval. Defaults to `24`.
+- `EPG_PREFETCH_ON_START`: `true` by default. Warms the cache shortly after the server starts.
+
+## Cache Warm-Up
+
+The server warms today and the next configured days in the background so opening the page usually reads from cache:
+
+```bash
+curl http://localhost:3000/api/cache/status?days=3 | jq
+curl -X POST http://localhost:3000/api/warm-cache \
+  -H 'content-type: application/json' \
+  -d '{"days":3,"force":true}' | jq
+```
+
+OMDb's free API key page lists a 1,000 daily request limit. The app caches movie lookups and limits new rating lookups per guide refresh with `EPG_RATINGS_MAX_LOOKUPS`, so a 3-day warm-up at the default cap is designed to stay well below that.
 
 ## Troubleshooting
 

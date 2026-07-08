@@ -120,6 +120,9 @@ function App() {
   }
 
   const selectedScore = scoreMeta(selected)
+  const selectedMeta = detailMeta(selected)
+  const primaryMeta = selectedMeta.filter(item => item.group !== 'category')
+  const categoryMeta = selectedMeta.filter(item => item.group === 'category')
 
   return (
     <main className="shell">
@@ -165,7 +168,14 @@ function App() {
               <div className="detail-rail">
                 <div className="detail-time"><Clock size={16} />{formatTime(selected.start)} - {formatTime(selected.stop)}</div>
                 <div className="meta">
-                  {detailMeta(selected).map(item => <span key={item.label} className={item.className || ''}>{item.label}</span>)}
+                  <div className="meta-row">
+                    {primaryMeta.map(item => <span key={item.label}>{item.label}</span>)}
+                  </div>
+                  {categoryMeta.length ? (
+                    <div className="meta-row category-row">
+                      {categoryMeta.map(item => <span key={item.label}>{item.label}</span>)}
+                    </div>
+                  ) : null}
                 </div>
               </div>
               <div className="selected-copy">

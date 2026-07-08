@@ -9,8 +9,8 @@ test('detail metadata handles numeric years', () => {
   })
 
   assert.deepEqual(meta, [
-    { label: '2026' },
-    { label: 'Sport' }
+    { label: '2026', group: 'primary' },
+    { label: 'Sport', group: 'category' }
   ])
 })
 
@@ -29,9 +29,9 @@ test('detail metadata removes score pill and redundant series category from rail
   }
 
   assert.deepEqual(detailMeta(programme), [
-    { label: 'S06E20' },
-    { label: '2017' },
-    { label: 'Drama' }
+    { label: 'S06E20', group: 'primary' },
+    { label: '2017', group: 'primary' },
+    { label: 'Drama', group: 'category' }
   ])
   assert.deepEqual(scoreMeta(programme), {
     label: '8.2/10',
@@ -52,8 +52,8 @@ test('movie score uses the same colored detail badge', () => {
   }
 
   assert.deepEqual(detailMeta(programme), [
-    { label: '2023' },
-    { label: 'Romantiek' }
+    { label: '2023', group: 'primary' },
+    { label: 'Romantiek', group: 'category' }
   ])
   assert.deepEqual(scoreMeta(programme), {
     label: '6.4/10',

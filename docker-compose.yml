@@ -15,6 +15,9 @@ services:
       EPG_SAMPLE_FALLBACK: "false"
       EPG_RATINGS_ENABLED: "true"
       EPG_RATINGS_MAX_LOOKUPS: "80"
+      EPG_PREFETCH_DAYS: "3"
+      EPG_PREFETCH_INTERVAL_HOURS: "24"
+      EPG_PREFETCH_ON_START: "true"
       # Optional: set this to enable IMDb movie ratings via OMDb.
       OMDB_API_KEY: ""
       EPG_TIMEZONE: Europe/Brussels

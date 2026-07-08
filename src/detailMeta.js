@@ -15,11 +15,11 @@ export function detailMeta(programme) {
   const items = []
   const episode = seasonEpisode(programme)
   const year = programme.media?.year || programme.year || ''
-  if (episode) items.push({ label: String(episode) })
-  if (year) items.push({ label: String(year) })
-  if (programme.media?.genre) items.push({ label: String(programme.media.genre) })
+  if (episode) items.push({ label: String(episode), group: 'primary' })
+  if (year) items.push({ label: String(year), group: 'primary' })
+  if (programme.media?.genre) items.push({ label: String(programme.media.genre), group: 'category' })
   if (programme.category && !isRedundantMediaCategory(programme, programme.category)) {
-    items.push({ label: String(programme.category) })
+    items.push({ label: String(programme.category), group: 'category' })
   }
 
   const seen = new Set()

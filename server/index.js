@@ -22,6 +22,7 @@ const pickxEnabled = process.env.EPG_PICKX_ENABLED !== 'false'
 const sampleFallbackEnabled = process.env.EPG_SAMPLE_FALLBACK === 'true'
 const ratingsEnabled = process.env.EPG_RATINGS_ENABLED !== 'false'
 const omdbApiKey = process.env.OMDB_API_KEY || ''
+const prefetchOnStart = process.env.EPG_PREFETCH_ON_START !== 'false'
 
 function positiveNumber(value, fallback) {
   const parsed = Number(value)
@@ -30,6 +31,8 @@ function positiveNumber(value, fallback) {
 
 const fetchTimeoutMs = positiveNumber(process.env.EPG_FETCH_TIMEOUT_MS, 12000)
 const ratingsMaxLookups = positiveNumber(process.env.EPG_RATINGS_MAX_LOOKUPS, 80)
+const prefetchDays = Math.min(positiveNumber(process.env.EPG_PREFETCH_DAYS, 3), 14)
+const prefetchIntervalHours = positiveNumber(process.env.EPG_PREFETCH_INTERVAL_HOURS, 24)
 
 function parseXmltvUrls(setting) {
   if (!setting || !setting.trim()) return []
@@ -54,7 +57,7 @@ const sourceKey = JSON.stringify({
   ratingsMaxLookups,
   fetchTimeoutMs,
   omdb: Boolean(omdbApiKey),
-  version: 9
+  version: 10
 })
 
 ensureDataDir(dataDir)
@@ -73,6 +76,12 @@ function todayInBrussels() {
   return formatter.format(new Date())
 }
 
+function addDays(dateText, days) {
+  const date = new Date(`${dateText}T12:00:00Z`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
 function loadChannels() {
   const customPath = path.join(dataDir, 'channels.json')
   if (!fs.existsSync(customPath)) return defaultChannels
@@ -82,6 +91,23 @@ function loadChannels() {
 
 function cachePath(dateText) {
   return path.join(dataDir, 'cache', `${dateText}.json`)
+}
+
+function cacheStatusForDate(dateText) {
+  const target = cachePath(dateText)
+  if (!fs.existsSync(target)) return { date: dateText, cached: false }
+  try {
+    const cached = JSON.parse(fs.readFileSync(target, 'utf8'))
+    return {
+      date: dateText,
+      cached: cached.sourceKey === sourceKey,
+      generatedAt: cached.generatedAt || '',
+      source: cached.source || '',
+      stats: cached.stats || null
+    }
+  } catch (error) {
+    return { date: dateText, cached: false, error: error.message }
+  }
 }
 
 function programmeKey(programme) {
@@ -176,6 +202,43 @@ async function loadGuide(dateText, force = false) {
   return guide
 }
 
+let warmCachePromise = null
+
+async function warmCache(options = {}) {
+  if (warmCachePromise) return warmCachePromise
+  const days = Math.min(positiveNumber(options.days, prefetchDays), 14)
+  const force = options.force === true
+  const startDate = options.startDate || todayInBrussels()
+  const dates = Array.from({ length: days }, (_, index) => addDays(startDate, index))
+
+  warmCachePromise = (async () => {
+    const results = []
+    for (const dateText of dates) {
+      try {
+        const guide = await loadGuide(dateText, force)
+        results.push({
+          date: dateText,
+          ok: true,
+          stats: guide.stats,
+          errors: guide.errors
+        })
+      } catch (error) {
+        results.push({ date: dateText, ok: false, error: error.message })
+      }
+    }
+    return {
+      generatedAt: new Date().toISOString(),
+      days,
+      force,
+      results
+    }
+  })().finally(() => {
+    warmCachePromise = null
+  })
+
+  return warmCachePromise
+}
+
 app.get('/api/sources', (req, res) => {
   res.json({
     timezone,
@@ -185,6 +248,9 @@ app.get('/api/sources', (req, res) => {
     ratingsEnabled,
     ratingsMaxLookups,
     fetchTimeoutMs,
+    prefetchDays,
+    prefetchIntervalHours,
+    prefetchOnStart,
     omdbEnabled: Boolean(omdbApiKey),
     orange: {
       status: 'available-for-local-adapter',
@@ -192,6 +258,15 @@ app.get('/api/sources', (req, res) => {
       note: 'Orange TV Go uses OAuth/AWS session handling; this app does not store your credentials.'
     },
     publicSources: ['iptv-org/epg: pickx.be, mon-programme-tv.be, vrt.be, vtm.be', 'epg.pw XMLTV all-in-one feed']
+  })
+})
+
+app.get('/api/cache/status', (req, res) => {
+  const days = Math.min(positiveNumber(req.query.days, prefetchDays), 14)
+  const startDate = req.query.start || todayInBrussels()
+  res.json({
+    sourceKey,
+    days: Array.from({ length: days }, (_, index) => cacheStatusForDate(addDays(startDate, index)))
   })
 })
 
@@ -213,6 +288,18 @@ app.post('/api/refresh', async (req, res, next) => {
   }
 })
 
+app.post('/api/warm-cache', async (req, res, next) => {
+  try {
+    res.json(await warmCache({
+      days: req.body?.days,
+      force: req.body?.force === true,
+      startDate: req.body?.startDate
+    }))
+  } catch (error) {
+    next(error)
+  }
+})
+
 const dist = path.join(__dirname, '..', 'dist')
 if (fs.existsSync(dist)) {
   app.use(express.static(dist))
@@ -224,6 +311,20 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: error.message || 'Unexpected server error' })
 })
 
+function scheduleCacheWarmup() {
+  if (prefetchOnStart) {
+    setTimeout(() => {
+      warmCache({ days: prefetchDays, force: false }).catch(error => console.error('Cache warm-up failed', error))
+    }, 1500)
+  }
+  if (prefetchIntervalHours > 0) {
+    setInterval(() => {
+      warmCache({ days: prefetchDays, force: true }).catch(error => console.error('Scheduled cache refresh failed', error))
+    }, prefetchIntervalHours * 60 * 60 * 1000)
+  }
+}
+
 app.listen(port, () => {
   console.log(`Belgian TV Guide listening on ${port}`)
+  scheduleCacheWarmup()
 })
