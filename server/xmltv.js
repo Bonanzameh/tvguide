@@ -1,7 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
+import { Readable } from 'node:stream'
 import sax from 'sax'
+
+const DEFAULT_TIMEOUT_MS = 12000
 
 function normalize(value = '') {
   return value
@@ -11,6 +14,10 @@ function normalize(value = '') {
     .replace(/&amp;/g, '&')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
+}
+
+function hasUnsupportedScript(value = '') {
+  return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Cyrillic}]/u.test(value)
 }
 
 function parseXmltvDate(value) {
@@ -32,31 +39,35 @@ function buildMatchers(channels) {
   return { byXmltv, byName }
 }
 
-function streamFromUrl(url) {
+function streamFromUrl(url, options = {}) {
   if (url.startsWith('file://')) {
     return fs.createReadStream(new URL(url))
   }
-  return fetch(url, { headers: { 'user-agent': 'BelgianTVGuide/0.1' } }).then(response => {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS } = options
+  return fetch(url, {
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { 'user-agent': 'BelgianTVGuide/0.1' }
+  }).then(response => {
     if (!response.ok) throw new Error(`${url} returned ${response.status}`)
     return response.body
   })
 }
 
-async function getInputStream(url) {
-  const stream = await streamFromUrl(url)
-  const nodeStream = stream.pipe ? stream : fs.ReadStream.fromWeb(stream)
+async function getInputStream(url, options = {}) {
+  const stream = await streamFromUrl(url, options)
+  const nodeStream = stream.pipe ? stream : Readable.fromWeb(stream)
   if (url.endsWith('.gz')) return nodeStream.pipe(zlib.createGunzip())
   return nodeStream
 }
 
-export async function parseXmltvSource(url, channels, dateText) {
+export async function parseXmltvSource(url, channels, dateText, options = {}) {
   const { byXmltv, byName } = buildMatchers(channels)
   const sourceChannelToAppChannel = new Map()
   const channelMeta = new Map()
   const programmes = []
   const dayStart = new Date(`${dateText}T00:00:00+02:00`)
   const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000)
-  const input = await getInputStream(url)
+  const input = await getInputStream(url, options)
   const parser = sax.createStream(true, { trim: true, normalize: true })
 
   let currentChannel = null
@@ -114,17 +125,24 @@ export async function parseXmltvSource(url, channels, dateText) {
     if (name === 'display-name' || ['title', 'sub-title', 'desc', 'category'].includes(name)) {
       textTarget = null
     } else if (name === 'channel' && currentChannel) {
-      let appChannel = byXmltv.get(normalize(currentChannel.id))
-      for (const displayName of currentChannel.names) {
+      const supportedNames = currentChannel.names.filter(displayName => !hasUnsupportedScript(displayName))
+      let appChannel = supportedNames.length ? byXmltv.get(normalize(currentChannel.id)) : null
+      for (const displayName of supportedNames) {
         appChannel ||= byName.get(normalize(displayName))
       }
       if (appChannel) {
         sourceChannelToAppChannel.set(currentChannel.id, appChannel)
-        channelMeta.set(appChannel.id, { icon: currentChannel.icon, sourceName: currentChannel.names[0] })
+        channelMeta.set(appChannel.id, { icon: currentChannel.icon, sourceName: supportedNames[0] })
       }
       currentChannel = null
     } else if (name === 'programme' && currentProgramme) {
-      programmes.push(currentProgramme)
+      const text = [
+        currentProgramme.title,
+        currentProgramme.subtitle,
+        currentProgramme.desc,
+        currentProgramme.category
+      ].join(' ')
+      if (!hasUnsupportedScript(text)) programmes.push(currentProgramme)
       currentProgramme = null
     }
   })
@@ -139,14 +157,14 @@ export async function parseXmltvSource(url, channels, dateText) {
   return { url, channels: channelsWithMeta, programmes }
 }
 
-export async function parseXmltvSources(urls, channels, dateText) {
+export async function parseXmltvSources(urls, channels, dateText, options = {}) {
   const merged = new Map()
   const errors = []
   let channelMeta = channels
 
   for (const url of urls.filter(Boolean)) {
     try {
-      const result = await parseXmltvSource(url, channelMeta, dateText)
+      const result = await parseXmltvSource(url, channelMeta, dateText, options)
       channelMeta = result.channels
       for (const programme of result.programmes) {
         const key = `${programme.channelId}-${programme.start}-${programme.stop}-${programme.title}`

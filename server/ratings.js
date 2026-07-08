@@ -4,6 +4,7 @@ import path from 'node:path'
 const TVMAZE_BASE = 'https://api.tvmaze.com'
 const OMDB_BASE = 'https://www.omdbapi.com/'
 const CACHE_VERSION = 1
+const DEFAULT_TIMEOUT_MS = 12000
 
 function normalizeKey(value = '') {
   return value
@@ -47,8 +48,12 @@ function writeJson(file, value) {
   fs.writeFileSync(file, JSON.stringify(value, null, 2))
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { headers: { 'user-agent': 'BelgianTVGuide/0.3' } })
+async function fetchJson(url, options = {}) {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS } = options
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { 'user-agent': 'BelgianTVGuide/0.3' }
+  })
   if (response.status === 404) return null
   if (!response.ok) throw new Error(`${url} returned ${response.status}`)
   return response.json()
@@ -65,14 +70,14 @@ function createLookupBudget(maxLookups) {
   }
 }
 
-async function resolveTvMazeSeries(programme, cacheDir, budget) {
+async function resolveTvMazeSeries(programme, cacheDir, budget, options = {}) {
   const showKey = safeFilename(programme.title)
   const showFile = path.join(cacheDir, `tvmaze-show-${showKey}.json`)
   let show = readJson(showFile, undefined)
 
   if (show === undefined) {
     if (!budget.take()) return null
-    show = await fetchJson(`${TVMAZE_BASE}/singlesearch/shows?q=${encodeURIComponent(programme.title)}`)
+    show = await fetchJson(`${TVMAZE_BASE}/singlesearch/shows?q=${encodeURIComponent(programme.title)}`, options)
       .catch(() => null)
     writeJson(showFile, show || null)
   }
@@ -84,7 +89,7 @@ async function resolveTvMazeSeries(programme, cacheDir, budget) {
     episode = readJson(episodeFile, undefined)
     if (episode === undefined) {
       if (!budget.take()) return null
-      episode = await fetchJson(`${TVMAZE_BASE}/shows/${show.id}/episodebynumber?season=${programme.season}&number=${programme.episode}`)
+      episode = await fetchJson(`${TVMAZE_BASE}/shows/${show.id}/episodebynumber?season=${programme.season}&number=${programme.episode}`, options)
         .catch(() => null)
       writeJson(episodeFile, episode || null)
     }
@@ -95,7 +100,7 @@ async function resolveTvMazeSeries(programme, cacheDir, budget) {
     let episodes = readJson(episodesFile, undefined)
     if (episodes === undefined) {
       if (!budget.take()) return null
-      episodes = await fetchJson(`${TVMAZE_BASE}/shows/${show.id}/episodes`)
+      episodes = await fetchJson(`${TVMAZE_BASE}/shows/${show.id}/episodes`, options)
         .catch(() => [])
       writeJson(episodesFile, Array.isArray(episodes) ? episodes : [])
     }
@@ -114,7 +119,7 @@ async function resolveTvMazeSeries(programme, cacheDir, budget) {
   }
 }
 
-async function resolveOmdbMovie(programme, cacheDir, apiKey, budget) {
+async function resolveOmdbMovie(programme, cacheDir, apiKey, budget, options = {}) {
   if (!apiKey) return null
   const movieKey = safeFilename(programme.title)
   const movieFile = path.join(cacheDir, `omdb-movie-${movieKey}.json`)
@@ -122,7 +127,7 @@ async function resolveOmdbMovie(programme, cacheDir, apiKey, budget) {
   if (data === undefined) {
     if (!budget.take()) return null
     const url = `${OMDB_BASE}?apikey=${encodeURIComponent(apiKey)}&t=${encodeURIComponent(programme.title)}&type=movie`
-    data = await fetchJson(url).catch(() => null)
+    data = await fetchJson(url, options).catch(() => null)
     writeJson(movieFile, data || null)
   }
   if (!data || data.Response === 'False') return null
@@ -160,6 +165,7 @@ export async function enrichProgrammeMetadata(programmes, dataDir, options = {})
   fs.mkdirSync(cacheDir, { recursive: true })
   const budget = createLookupBudget(options.maxLookups || 80)
   const omdbApiKey = options.omdbApiKey || ''
+  const fetchOptions = { timeoutMs: options.timeoutMs || DEFAULT_TIMEOUT_MS }
   const metadataCache = new Map()
 
   const output = []
@@ -182,8 +188,8 @@ export async function enrichProgrammeMetadata(programmes, dataDir, options = {})
     let metadata = metadataCache.get(metadataKey)
     if (metadata === undefined) {
       metadata = mediaType === 'series'
-        ? await resolveTvMazeSeries(programme, cacheDir, budget)
-        : await resolveOmdbMovie(programme, cacheDir, omdbApiKey, budget)
+        ? await resolveTvMazeSeries(programme, cacheDir, budget, fetchOptions)
+        : await resolveOmdbMovie(programme, cacheDir, omdbApiKey, budget, fetchOptions)
       metadataCache.set(metadataKey, metadata || null)
     }
 

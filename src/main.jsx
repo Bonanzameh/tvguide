@@ -4,7 +4,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, Clock, RefreshCw, Search, Sett
 import './styles.css'
 
 const HOUR_WIDTH = 240
-const CHANNEL_WIDTH = 190
+const CHANNEL_WIDTH = 230
 const ROW_HEIGHT = 74
 
 function dateKey(date) {
@@ -19,6 +19,14 @@ function formatTime(value) {
 
 function formatDay(value) {
   return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }).format(new Date(`${value}T12:00:00`))
+}
+
+function sourceSummary(sources) {
+  if (!sources) return ''
+  const parts = []
+  if (sources.pickxEnabled) parts.push('Pickx')
+  if (sources.xmltvUrls.length) parts.push(`${sources.xmltvUrls.length} XMLTV`)
+  return parts.join(' + ')
 }
 
 function App() {
@@ -120,10 +128,32 @@ function App() {
   return (
     <main className="shell">
       <header className="topbar">
-        <div>
+        <div className="title-block">
           <p className="eyebrow">Orange TV Go lineup workspace</p>
           <h1>Belgian TV Guide</h1>
         </div>
+        <section className="selected-strip" aria-live="polite">
+          {selected ? (
+            <>
+              <div className="detail-time"><Clock size={16} />{formatTime(selected.start)} - {formatTime(selected.stop)}</div>
+              <div className="selected-copy">
+                <h2>{selected.title}</h2>
+                {selected.subtitle ? <p className="subtitle">{selected.subtitle}</p> : null}
+                <p>{selected.desc || 'No description available from this source.'}</p>
+              </div>
+              <div className="meta">
+                {selected.media?.type ? (
+                  <span>{selected.media.type === 'movie' ? 'Movie' : 'Series'}{selected.media.rating ? ` ${selected.media.rating}/10` : ''}</span>
+                ) : null}
+                {selected.media?.genre ? <span>{selected.media.genre}</span> : null}
+                <span>{selected.category || 'Programme'}</span>
+                <span>{selected.source}</span>
+              </div>
+            </>
+          ) : (
+            <p className="empty-detail">Select a programme slot to see details.</p>
+          )}
+        </section>
         <div className="top-actions">
           <button className="icon-button" onClick={() => moveDate(-1)} aria-label="Previous day"><ChevronLeft size={18} /></button>
           <button className="date-button"><CalendarDays size={17} />{formatDay(date)}</button>
@@ -156,7 +186,7 @@ function App() {
       ) : null}
 
       <section className="workspace">
-        <div className="guide">
+        <div className="guide" style={{ gridTemplateColumns: `${CHANNEL_WIDTH}px minmax(0, 1fr)` }}>
           <div className="channel-header">Channels</div>
           <div className="timeline-header" ref={headerRef}>
             <div className="hours" style={{ width: 24 * HOUR_WIDTH }}>
@@ -171,7 +201,6 @@ function App() {
                 <div>
                   {channel.number ? <span className="channel-number">{channel.number}</span> : null}
                   <strong>{channel.name}</strong>
-                  <span>{channel.sourceName || channel.group}</span>
                 </div>
               </div>
             ))}
@@ -200,30 +229,9 @@ function App() {
             </div>
           </div>
         </div>
-
-        <aside className="details">
-          {selected ? (
-            <>
-              <div className="detail-time"><Clock size={16} />{formatTime(selected.start)} - {formatTime(selected.stop)}</div>
-              <h2>{selected.title}</h2>
-              {selected.subtitle ? <p className="subtitle">{selected.subtitle}</p> : null}
-              <p>{selected.desc || 'No description available from this source.'}</p>
-              <div className="meta">
-                {selected.media?.type ? (
-                  <span>{selected.media.type === 'movie' ? 'Movie' : 'Series'}{selected.media.rating ? ` ${selected.media.rating}/10` : ''}</span>
-                ) : null}
-                {selected.media?.genre ? <span>{selected.media.genre}</span> : null}
-                <span>{selected.category || 'Programme'}</span>
-                <span>{selected.source}</span>
-              </div>
-            </>
-          ) : (
-            <p>Select a programme slot to see details here.</p>
-          )}
-          {sources ? <div className="source-note">Sources: {sources.pickxEnabled ? 'Pickx' : ''}{sources.pickxEnabled && sources.xmltvUrls.length ? ' + ' : ''}{sources.xmltvUrls.length ? `${sources.xmltvUrls.length} XMLTV` : ''}</div> : null}
-        </aside>
       </section>
 
+      {sources ? <div className="source-note">Sources: {sourceSummary(sources)}</div> : null}
       {loading ? <div className="loading">Loading guide...</div> : null}
     </main>
   )
@@ -237,10 +245,16 @@ function isNow(programme) {
 function ProgrammeSlot({ programme, dayStart, selected, onClick }) {
   const start = new Date(programme.start)
   const stop = new Date(programme.stop)
-  const left = Math.max(0, ((start.getTime() - dayStart.getTime()) / 3600000) * HOUR_WIDTH)
-  const width = Math.max(34, ((stop.getTime() - start.getTime()) / 3600000) * HOUR_WIDTH - 4)
+  const dayStartMs = dayStart.getTime()
+  const dayEndMs = dayStartMs + 24 * 60 * 60 * 1000
+  const visibleStart = Math.max(start.getTime(), dayStartMs)
+  const visibleStop = Math.min(stop.getTime(), dayEndMs)
+  const left = Math.max(0, ((visibleStart - dayStartMs) / 3600000) * HOUR_WIDTH)
+  const durationWidth = Math.max(0, ((visibleStop - visibleStart) / 3600000) * HOUR_WIDTH)
+  const width = Math.max(2, durationWidth - 4)
+  const compact = width < 44
   return (
-    <button className={`slot ${selected ? 'selected' : ''} ${isNow(programme) ? 'now' : ''}`} style={{ left, width }} onClick={onClick}>
+    <button className={`slot ${selected ? 'selected' : ''} ${isNow(programme) ? 'now' : ''} ${compact ? 'compact' : ''}`} style={{ left, width }} onClick={onClick}>
       {programme.media?.type ? (
         <span
           className={`media-badge rating-${programme.media.ratingColor || 'neutral'}`}

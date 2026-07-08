@@ -7,9 +7,10 @@ services:
       PORT: "3000"
       DATA_DIR: /data
       # Add one or more comma-separated XMLTV URLs or mounted file URLs when ready.
-      # Empty means the public epg.pw XMLTV feed is used as a supplement.
-      # Use "none" to disable XMLTV and only use Pickx.
+      # Empty disables XMLTV and only uses Pickx. Use "epg.pw" only if you accept
+      # a large, slow supplemental feed.
       EPG_XMLTV_URLS: ""
+      EPG_FETCH_TIMEOUT_MS: "12000"
       EPG_PICKX_ENABLED: "true"
       EPG_SAMPLE_FALLBACK: "false"
       EPG_RATINGS_ENABLED: "true"

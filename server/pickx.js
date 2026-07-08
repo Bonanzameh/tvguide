@@ -2,6 +2,7 @@ const PICKX_GUIDE_URL = 'https://www.pickx.be/nl/televisie/tv-gids'
 const PICKX_VERSION_PREFIX = 'https://www.pickx.be/api/s-'
 const PICKX_EPG_BASE = 'https://px-epg.azureedge.net/airings'
 const PICKX_GRAPHQL = 'https://api.proximusmwc.be/tiams/v3/graphql'
+const DEFAULT_TIMEOUT_MS = 12000
 
 const headers = {
   origin: 'https://www.pickx.be',
@@ -10,12 +11,25 @@ const headers = {
 }
 
 function describeFetchError(url, error) {
+  if (error.name === 'TimeoutError' || error.name === 'AbortError') {
+    return `${url} timed out`
+  }
   const details = [
     error.message,
+    error.name,
     error.cause?.code,
     error.cause?.message
   ].filter(Boolean).join(' - ')
   return `${url} failed: ${details || 'unknown network error'}`
+}
+
+function createFetchOptions(options = {}) {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchOptions } = options
+  return {
+    ...fetchOptions,
+    signal: fetchOptions.signal || AbortSignal.timeout(timeoutMs),
+    headers: { ...headers, ...(fetchOptions.headers || {}) }
+  }
 }
 
 function normalize(value = '') {
@@ -42,10 +56,7 @@ function dayBounds(dateText) {
 async function fetchJson(url, options = {}) {
   let response
   try {
-    response = await fetch(url, {
-      ...options,
-      headers: { ...headers, ...(options.headers || {}) }
-    })
+    response = await fetch(url, createFetchOptions(options))
   } catch (error) {
     throw new Error(describeFetchError(url, error))
   }
@@ -53,10 +64,10 @@ async function fetchJson(url, options = {}) {
   return response.json()
 }
 
-async function fetchApiVersion() {
+async function fetchApiVersion(options = {}) {
   let response
   try {
-    response = await fetch(PICKX_GUIDE_URL, { headers })
+    response = await fetch(PICKX_GUIDE_URL, createFetchOptions(options))
   } catch (error) {
     throw new Error(describeFetchError(PICKX_GUIDE_URL, error))
   }
@@ -64,12 +75,12 @@ async function fetchApiVersion() {
   const html = await response.text()
   const hash = html.match(/"hashes":\["([^"]+)"\]/)?.[1]
   if (!hash) throw new Error('Pickx app version hash not found')
-  const versionData = await fetchJson(`${PICKX_VERSION_PREFIX}${hash}`)
+  const versionData = await fetchJson(`${PICKX_VERSION_PREFIX}${hash}`, options)
   if (!versionData.version) throw new Error('Pickx API version not found')
   return versionData.version
 }
 
-async function fetchPickxChannels() {
+async function fetchPickxChannels(options = {}) {
   const body = {
     operationName: 'getChannels',
     variables: {
@@ -89,6 +100,7 @@ async function fetchPickxChannels() {
   }
 
   const data = await fetchJson(PICKX_GRAPHQL, {
+    ...options,
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body)
@@ -165,9 +177,9 @@ function toProgramme(item, channel, dateText) {
   }
 }
 
-export async function fetchPickxGuide(channels, dateText) {
-  const version = await fetchApiVersion()
-  const pickxChannels = await fetchPickxChannels()
+export async function fetchPickxGuide(channels, dateText, options = {}) {
+  const version = await fetchApiVersion(options)
+  const pickxChannels = await fetchPickxChannels(options)
   const usedIds = new Set()
   const mapped = []
 
@@ -180,7 +192,7 @@ export async function fetchPickxGuide(channels, dateText) {
 
   const results = await mapLimit(mapped, 8, async ({ channel, pickxChannel }) => {
     const url = `${PICKX_EPG_BASE}/${version}/${dateText}/channel/${pickxChannel.id}?timezone=Europe%2FBrussels`
-    const items = await fetchJson(url)
+    const items = await fetchJson(url, options)
     return {
       channel: {
         ...channel,

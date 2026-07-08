@@ -18,22 +18,43 @@ const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data')
 const timezone = process.env.EPG_TIMEZONE || 'Europe/Brussels'
 const defaultXmltvUrl = 'https://epg.pw/xmltv/epg.xml.gz'
 const xmltvSetting = process.env.EPG_XMLTV_URLS
-const xmltvUrls = (!xmltvSetting || !xmltvSetting.trim())
-  ? [defaultXmltvUrl]
-  : xmltvSetting.split(',').map(url => url.trim()).filter(url => url && url.toLowerCase() !== 'none')
 const pickxEnabled = process.env.EPG_PICKX_ENABLED !== 'false'
 const sampleFallbackEnabled = process.env.EPG_SAMPLE_FALLBACK === 'true'
 const ratingsEnabled = process.env.EPG_RATINGS_ENABLED !== 'false'
-const ratingsMaxLookups = Number(process.env.EPG_RATINGS_MAX_LOOKUPS || 80)
 const omdbApiKey = process.env.OMDB_API_KEY || ''
+
+function positiveNumber(value, fallback) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const fetchTimeoutMs = positiveNumber(process.env.EPG_FETCH_TIMEOUT_MS, 12000)
+const ratingsMaxLookups = positiveNumber(process.env.EPG_RATINGS_MAX_LOOKUPS, 80)
+
+function parseXmltvUrls(setting) {
+  if (!setting || !setting.trim()) return []
+  return setting
+    .split(',')
+    .map(url => url.trim())
+    .filter(Boolean)
+    .flatMap(url => {
+      const normalized = url.toLowerCase()
+      if (['none', 'false', 'off'].includes(normalized)) return []
+      if (['default', 'epg.pw', 'epgpw'].includes(normalized)) return [defaultXmltvUrl]
+      return [url]
+    })
+}
+
+const xmltvUrls = parseXmltvUrls(xmltvSetting)
 const sourceKey = JSON.stringify({
   pickxEnabled,
   xmltvUrls,
   sampleFallbackEnabled,
   ratingsEnabled,
   ratingsMaxLookups,
+  fetchTimeoutMs,
   omdb: Boolean(omdbApiKey),
-  version: 5
+  version: 7
 })
 
 ensureDataDir(dataDir)
@@ -63,6 +84,21 @@ function cachePath(dateText) {
   return path.join(dataDir, 'cache', `${dateText}.json`)
 }
 
+function programmeKey(programme) {
+  return `${programme.channelId}-${programme.start}-${programme.stop}`
+}
+
+function overlapsExistingProgramme(programmes, candidate) {
+  const candidateStart = new Date(candidate.start).getTime()
+  const candidateStop = new Date(candidate.stop).getTime()
+  return [...programmes.values()].some(programme => {
+    if (programme.channelId !== candidate.channelId) return false
+    const start = new Date(programme.start).getTime()
+    const stop = new Date(programme.stop).getTime()
+    return Math.min(stop, candidateStop) - Math.max(start, candidateStart) > 60 * 1000
+  })
+}
+
 async function loadGuide(dateText, force = false) {
   const channels = await enrichChannelLogos(loadChannels(), dataDir)
   const target = cachePath(dateText)
@@ -77,10 +113,10 @@ async function loadGuide(dateText, force = false) {
 
   if (pickxEnabled) {
     try {
-      const pickx = await fetchPickxGuide(guideChannels, dateText)
+      const pickx = await fetchPickxGuide(guideChannels, dateText, { timeoutMs: fetchTimeoutMs })
       guideChannels = pickx.channels
       for (const programme of pickx.programmes) {
-        programmes.set(`${programme.channelId}-${programme.start}-${programme.stop}`, programme)
+        programmes.set(programmeKey(programme), programme)
       }
     } catch (error) {
       errors.push({ source: 'Pickx', message: error.message })
@@ -88,11 +124,13 @@ async function loadGuide(dateText, force = false) {
   }
 
   if (xmltvUrls.length) {
-    const parsed = await parseXmltvSources(xmltvUrls, guideChannels, dateText)
+    const parsed = await parseXmltvSources(xmltvUrls, guideChannels, dateText, { timeoutMs: fetchTimeoutMs })
     guideChannels = parsed.channels
     for (const programme of parsed.programmes) {
-      const key = `${programme.channelId}-${programme.start}-${programme.stop}`
-      if (!programmes.has(key)) programmes.set(key, programme)
+      const key = programmeKey(programme)
+      if (!programmes.has(key) && !overlapsExistingProgramme(programmes, programme)) {
+        programmes.set(key, programme)
+      }
     }
     errors.push(...parsed.errors.map(error => ({ source: 'XMLTV', ...error })))
   }
@@ -112,7 +150,8 @@ async function loadGuide(dateText, force = false) {
   finalProgrammes = await enrichProgrammeMetadata(finalProgrammes, dataDir, {
     enabled: ratingsEnabled,
     maxLookups: ratingsMaxLookups,
-    omdbApiKey
+    omdbApiKey,
+    timeoutMs: fetchTimeoutMs
   })
 
   const guide = {
@@ -145,6 +184,7 @@ app.get('/api/sources', (req, res) => {
     sampleFallbackEnabled,
     ratingsEnabled,
     ratingsMaxLookups,
+    fetchTimeoutMs,
     omdbEnabled: Boolean(omdbApiKey),
     orange: {
       status: 'available-for-local-adapter',
