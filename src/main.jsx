@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { CalendarDays, ChevronLeft, ChevronRight, Clock, Menu, RefreshCw, Search } from 'lucide-react'
-import { detailMeta } from './detailMeta.js'
+import { detailMeta, scoreMeta } from './detailMeta.js'
 import './styles.css'
 
 const HOUR_WIDTH = 240
@@ -119,6 +119,8 @@ function App() {
     setGroupMenuOpen(false)
   }
 
+  const selectedScore = scoreMeta(selected)
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -170,6 +172,9 @@ function App() {
                 <h2>{selected.title}</h2>
                 {selected.subtitle ? <p className="subtitle">{selected.subtitle}</p> : null}
                 <p>{selected.desc || 'No description available from this source.'}</p>
+                {selectedScore ? (
+                  <span className={selectedScore.className}>{selectedScore.label}</span>
+                ) : null}
               </div>
             </>
           ) : (

@@ -17,12 +17,6 @@ export function detailMeta(programme) {
   const year = programme.media?.year || programme.year || ''
   if (episode) items.push({ label: String(episode) })
   if (year) items.push({ label: String(year) })
-  if (programme.media?.rating) {
-    items.push({
-      label: `${programme.media.rating}/10`,
-      className: `score-pill rating-${programme.media.ratingColor || 'neutral'}`
-    })
-  }
   if (programme.media?.genre) items.push({ label: String(programme.media.genre) })
   if (programme.category && !isRedundantMediaCategory(programme, programme.category)) {
     items.push({ label: String(programme.category) })
@@ -35,4 +29,12 @@ export function detailMeta(programme) {
     seen.add(key)
     return true
   })
+}
+
+export function scoreMeta(programme) {
+  if (typeof programme?.media?.rating !== 'number') return null
+  return {
+    label: `${programme.media.rating}/10`,
+    className: `detail-score rating-${programme.media.ratingColor || 'neutral'}`
+  }
 }

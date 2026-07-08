@@ -102,7 +102,10 @@ h1 {
 }
 
 .selected-copy {
+  position: relative;
   min-width: 0;
+  min-height: 126px;
+  padding-bottom: 34px;
 }
 
 .selected-copy h2 {
@@ -123,7 +126,24 @@ h1 {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
+}
+
+.detail-score {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #101316;
+  font-size: 0.86rem;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.32), 0 2px 8px rgba(0, 0, 0, 0.24);
+}
+
+.detail-score.rating-dark-green {
+  color: #f7fff9;
 }
 
 .empty-detail {
@@ -503,16 +523,6 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 5px 9px;
-}
-
-.meta .score-pill {
-  border-color: transparent;
-  color: #101316;
-  font-weight: 800;
-}
-
-.meta .rating-dark-green {
-  color: #f7fff9;
 }
 
 .notice {

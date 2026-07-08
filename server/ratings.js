@@ -3,7 +3,7 @@ import path from 'node:path'
 
 const TVMAZE_BASE = 'https://api.tvmaze.com'
 const OMDB_BASE = 'https://www.omdbapi.com/'
-const CACHE_VERSION = 2
+const CACHE_VERSION = 3
 const DEFAULT_TIMEOUT_MS = 12000
 
 function normalizeKey(value = '') {
@@ -20,8 +20,8 @@ function safeFilename(value) {
 }
 
 function classifyProgramme(programme) {
-  const category = normalizeKey(programme.category)
-  if (/\b(film|films|movie|movies|cinema)\b/.test(category)) return 'movie'
+  const category = normalizeKey([programme.category, programme.categoryDetail].filter(Boolean).join(' '))
+  if (/\b(film|films|movie|movies|cinema|speelfilm|tv film)\b/.test(category)) return 'movie'
   if (/\b(serie|series|fiction)\b/.test(category)) return 'series'
   return null
 }
@@ -51,6 +51,10 @@ function writeJson(file, value) {
 function yearFromDate(value) {
   const match = String(value || '').match(/^(\d{4})/)
   return match ? match[1] : ''
+}
+
+function programmeYear(programme) {
+  return yearFromDate(programme.year)
 }
 
 async function fetchJson(url, options = {}) {
@@ -127,12 +131,19 @@ async function resolveTvMazeSeries(programme, cacheDir, budget, options = {}) {
 
 async function resolveOmdbMovie(programme, cacheDir, apiKey, budget, options = {}) {
   if (!apiKey) return null
+  const year = programmeYear(programme)
   const movieKey = safeFilename(programme.title)
-  const movieFile = path.join(cacheDir, `omdb-movie-${movieKey}.json`)
+  const movieFile = path.join(cacheDir, `omdb-movie-${movieKey}-${year || 'unknown'}.json`)
   let data = readJson(movieFile, undefined)
   if (data === undefined) {
     if (!budget.take()) return null
-    const url = `${OMDB_BASE}?apikey=${encodeURIComponent(apiKey)}&t=${encodeURIComponent(programme.title)}&type=movie`
+    const params = new URLSearchParams({
+      apikey: apiKey,
+      t: programme.title,
+      type: 'movie'
+    })
+    if (year) params.set('y', year)
+    const url = `${OMDB_BASE}?${params.toString()}`
     data = await fetchJson(url, options).catch(() => null)
     writeJson(movieFile, data || null)
   }
@@ -190,7 +201,8 @@ export async function enrichProgrammeMetadata(programmes, dataDir, options = {})
       normalizeKey(programme.title),
       normalizeKey(programme.subtitle),
       programme.season || '',
-      programme.episode || ''
+      programme.episode || '',
+      programmeYear(programme)
     ].join('|')
 
     let metadata = metadataCache.get(metadataKey)

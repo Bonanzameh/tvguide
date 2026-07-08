@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { detailMeta } from '../src/detailMeta.js'
+import { detailMeta, scoreMeta } from '../src/detailMeta.js'
 
 test('detail metadata handles numeric years', () => {
   const meta = detailMeta({
@@ -14,8 +14,8 @@ test('detail metadata handles numeric years', () => {
   ])
 })
 
-test('detail metadata color-codes rating pills and removes redundant series category', () => {
-  const meta = detailMeta({
+test('detail metadata removes score pill and redundant series category from rail', () => {
+  const programme = {
     season: 6,
     episode: 20,
     category: 'Serie',
@@ -26,12 +26,37 @@ test('detail metadata color-codes rating pills and removes redundant series cate
       ratingColor: 'dark-green',
       genre: 'Drama'
     }
-  })
+  }
 
-  assert.deepEqual(meta, [
+  assert.deepEqual(detailMeta(programme), [
     { label: 'S06E20' },
     { label: '2017' },
-    { label: '8.2/10', className: 'score-pill rating-dark-green' },
     { label: 'Drama' }
   ])
+  assert.deepEqual(scoreMeta(programme), {
+    label: '8.2/10',
+    className: 'detail-score rating-dark-green'
+  })
+})
+
+test('movie score uses the same colored detail badge', () => {
+  const programme = {
+    category: 'Films',
+    media: {
+      type: 'movie',
+      year: '2023',
+      rating: 6.4,
+      ratingColor: 'yellow',
+      genre: 'Romantiek'
+    }
+  }
+
+  assert.deepEqual(detailMeta(programme), [
+    { label: '2023' },
+    { label: 'Romantiek' }
+  ])
+  assert.deepEqual(scoreMeta(programme), {
+    label: '6.4/10',
+    className: 'detail-score rating-yellow'
+  })
 })
