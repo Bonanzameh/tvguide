@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { CalendarDays, ChevronLeft, ChevronRight, Clock, Menu, RefreshCw, Search } from 'lucide-react'
+import { detailMeta } from './detailMeta.js'
 import './styles.css'
 
 const HOUR_WIDTH = 240
@@ -19,45 +20,6 @@ function formatTime(value) {
 
 function formatDay(value) {
   return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }).format(new Date(`${value}T12:00:00`))
-}
-
-function seasonEpisode(programme) {
-  if (!programme?.season || !programme?.episode) return ''
-  return `S${String(programme.season).padStart(2, '0')}E${String(programme.episode).padStart(2, '0')}`
-}
-
-function isRedundantMediaCategory(programme, value) {
-  const normalized = String(value || '').toLowerCase()
-  if (programme.media?.type === 'series') return ['serie', 'series'].includes(normalized)
-  if (programme.media?.type === 'movie') return ['film', 'films', 'movie', 'movies'].includes(normalized)
-  return false
-}
-
-function detailMeta(programme) {
-  if (!programme) return []
-  const items = []
-  const episode = seasonEpisode(programme)
-  const year = programme.media?.year || programme.year || ''
-  if (episode) items.push({ label: episode })
-  if (year) items.push({ label: year })
-  if (programme.media?.rating) {
-    items.push({
-      label: `${programme.media.rating}/10`,
-      className: `score-pill rating-${programme.media.ratingColor || 'neutral'}`
-    })
-  }
-  if (programme.media?.genre) items.push({ label: programme.media.genre })
-  if (programme.category && !isRedundantMediaCategory(programme, programme.category)) {
-    items.push({ label: programme.category })
-  }
-
-  const seen = new Set()
-  return items.filter(item => {
-    const key = item.label.toLowerCase()
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
 }
 
 function App() {
