@@ -99,6 +99,9 @@ h1 {
 .detail-rail {
   width: 238px;
   min-width: 0;
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
 }
 
 .selected-copy {
@@ -239,6 +242,97 @@ h1 {
 .group-panel button:not(.active):hover {
   border-color: var(--line);
   background: var(--panel-2);
+}
+
+.programme-menu-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 800;
+}
+
+.programme-menu-toggle span {
+  min-width: 24px;
+  border-radius: 999px;
+  background: var(--orange);
+  color: #111;
+  text-align: center;
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.programme-menu-list {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.programme-menu-list p {
+  margin: 4px 6px 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.programme-menu-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 6px;
+  align-items: center;
+}
+
+.programme-menu-item button:first-child {
+  min-width: 0;
+}
+
+.programme-menu-item button:first-child span,
+.programme-menu-item button:first-child strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.programme-menu-item button:first-child span {
+  color: var(--orange);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.programme-menu-item .mini-icon {
+  width: 32px;
+  min-height: 32px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  text-align: center;
+}
+
+.menu-divider {
+  height: 1px;
+  margin: 6px;
+  background: var(--line);
+}
+
+.watch-toggle {
+  width: 100%;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.watch-toggle.active {
+  border-color: var(--orange);
+  background: var(--orange);
+  color: #111;
+  font-weight: 800;
 }
 
 .workspace {
@@ -595,5 +689,71 @@ h1 {
 
   .meta {
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .shell {
+    padding: 10px;
+  }
+
+  h1 {
+    font-size: 1.66rem;
+  }
+
+  .title-controls,
+  .search {
+    max-width: 100%;
+  }
+
+  .selected-strip {
+    padding: 12px;
+  }
+
+  .guide {
+    grid-template-columns: 68px minmax(0, 1fr) !important;
+    grid-template-rows: 42px minmax(520px, calc(100vh - 300px));
+  }
+
+  .channel-header {
+    justify-content: center;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .channel-header::after {
+    content: "TV";
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
+
+  .channel-cell {
+    justify-content: center;
+    gap: 0;
+    padding: 6px 4px;
+  }
+
+  .channel-cell img,
+  .logo-fallback {
+    width: 38px;
+    height: 38px;
+    flex-basis: 38px;
+    border-radius: 7px;
+    font-size: 0.68rem;
+  }
+
+  .channel-cell > div {
+    display: none;
+  }
+
+  .hour {
+    padding-left: 8px;
+  }
+
+  .group-panel {
+    right: auto;
+    left: 0;
+    width: min(280px, calc(100vw - 20px));
   }
 }

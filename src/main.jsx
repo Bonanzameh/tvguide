@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, Menu, RefreshCw, Search } from 'lucide-react'
+import { Bookmark, BookmarkCheck, CalendarDays, ChevronLeft, ChevronRight, Clock, Menu, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { detailMeta, scoreMeta } from './detailMeta.js'
 import './styles.css'
 
 const HOUR_WIDTH = 240
 const CHANNEL_WIDTH = 230
 const ROW_HEIGHT = 74
+const WATCHLIST_STORAGE_KEY = 'belgian-tv-guide-watchlist-v1'
 
 function dateKey(date) {
   const copy = new Date(date)
@@ -22,6 +23,24 @@ function formatDay(value) {
   return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }).format(new Date(`${value}T12:00:00`))
 }
 
+function programmeKey(programme) {
+  if (!programme) return ''
+  return [programme.channelId, programme.start, programme.stop, programme.title].join('|')
+}
+
+function programmeDate(programme) {
+  return programme?.start ? dateKey(new Date(programme.start)) : ''
+}
+
+function readWatchlist() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(WATCHLIST_STORAGE_KEY) || '{}')
+    return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}
+  } catch {
+    return {}
+  }
+}
+
 function App() {
   const [date, setDate] = useState(dateKey(new Date()))
   const [guide, setGuide] = useState(null)
@@ -29,6 +48,8 @@ function App() {
   const [query, setQuery] = useState('')
   const [group, setGroup] = useState('All')
   const [groupMenuOpen, setGroupMenuOpen] = useState(false)
+  const [showProgrammeMenu, setShowProgrammeMenu] = useState(false)
+  const [watchlist, setWatchlist] = useState(readWatchlist)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const headerRef = useRef(null)
@@ -56,6 +77,10 @@ function App() {
     }
   }, [date])
 
+  useEffect(() => {
+    localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist))
+  }, [watchlist])
+
   const groups = useMemo(() => ['All', ...new Set((guide?.channels || []).map(channel => channel.group).filter(Boolean))], [guide])
   const filteredChannels = useMemo(() => {
     const term = query.trim().toLowerCase()
@@ -74,6 +99,22 @@ function App() {
     }
     return map
   }, [guide])
+
+  const programmeByKey = useMemo(() => {
+    const map = new Map()
+    for (const programme of guide?.programmes || []) map.set(programmeKey(programme), programme)
+    return map
+  }, [guide])
+
+  const dailyWatchlist = useMemo(() => (
+    Object.values(watchlist)
+      .filter(entry => entry.date === date)
+      .map(entry => ({
+        ...entry,
+        programme: programmeByKey.get(entry.key) || entry.programme
+      }))
+      .sort((a, b) => a.programme.start.localeCompare(b.programme.start))
+  ), [date, programmeByKey, watchlist])
 
   const dayStart = new Date(`${date}T00:00:00`)
   const nowOffset = Math.max(0, Math.min(24 * HOUR_WIDTH, ((Date.now() - dayStart.getTime()) / 3600000) * HOUR_WIDTH))
@@ -119,10 +160,43 @@ function App() {
     setGroupMenuOpen(false)
   }
 
+  function toggleSelectedWatch() {
+    if (!selected) return
+    const key = programmeKey(selected)
+    setWatchlist(current => {
+      const next = { ...current }
+      if (next[key]) {
+        delete next[key]
+      } else {
+        next[key] = {
+          key,
+          date: programmeDate(selected),
+          programme: selected
+        }
+      }
+      return next
+    })
+  }
+
+  function removeWatchEntry(key) {
+    setWatchlist(current => {
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
+  }
+
+  function selectWatchEntry(entry) {
+    setSelected(entry.programme)
+    setGroupMenuOpen(false)
+  }
+
   const selectedScore = scoreMeta(selected)
   const selectedMeta = detailMeta(selected)
   const primaryMeta = selectedMeta.filter(item => item.group !== 'category')
   const categoryMeta = selectedMeta.filter(item => item.group === 'category')
+  const selectedWatchKey = programmeKey(selected)
+  const selectedIsTagged = Boolean(selectedWatchKey && watchlist[selectedWatchKey])
 
   return (
     <main className="shell">
@@ -151,6 +225,27 @@ function App() {
                 </button>
                 {groupMenuOpen ? (
                   <div className="group-panel">
+                    <button className="programme-menu-toggle" onClick={() => setShowProgrammeMenu(open => !open)}>
+                      My programme <span>{dailyWatchlist.length}</span>
+                    </button>
+                    {showProgrammeMenu ? (
+                      <div className="programme-menu-list">
+                        {dailyWatchlist.length ? dailyWatchlist.map(entry => (
+                          <div className="programme-menu-item" key={entry.key}>
+                            <button onClick={() => selectWatchEntry(entry)}>
+                              <span>{formatTime(entry.programme.start)}</span>
+                              <strong>{entry.programme.title}</strong>
+                            </button>
+                            <button className="mini-icon" onClick={() => removeWatchEntry(entry.key)} aria-label={`Remove ${entry.programme.title}`}>
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        )) : (
+                          <p>No tagged shows for this day.</p>
+                        )}
+                      </div>
+                    ) : null}
+                    <div className="menu-divider" />
                     {groups.map(item => (
                       <button key={item} className={item === group ? 'active' : ''} onClick={() => chooseGroup(item)}>
                         {item}
@@ -177,6 +272,10 @@ function App() {
                     </div>
                   ) : null}
                 </div>
+                <button className={`watch-toggle ${selectedIsTagged ? 'active' : ''}`} onClick={toggleSelectedWatch}>
+                  {selectedIsTagged ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
+                  {selectedIsTagged ? 'In my programme' : 'Add to my programme'}
+                </button>
               </div>
               <div className="selected-copy">
                 <h2>{selected.title}</h2>
