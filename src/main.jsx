@@ -7,6 +7,9 @@ import './styles.css'
 const HOUR_WIDTH = 240
 const CHANNEL_WIDTH = 230
 const ROW_HEIGHT = 74
+const PLAN_HOUR_WIDTH = 190
+const PLAN_CHANNEL_WIDTH = 180
+const PLAN_MAX_VISIBLE_HOURS = 3
 const WATCHLIST_STORAGE_KEY = 'belgian-tv-guide-watchlist-v1'
 
 function dateKey(date) {
@@ -454,9 +457,22 @@ function ProgrammeSlot({ programme, dayStart, selected, onClick }) {
 }
 
 function ProgrammePlanModal({ date, entries, onClose, onRemove, onSelect }) {
+  const planWindow = createPlanWindow(entries)
+
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
-      <section className="programme-modal" role="dialog" aria-modal="true" aria-labelledby="programme-plan-title" onClick={event => event.stopPropagation()}>
+      <section
+        className="programme-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="programme-plan-title"
+        style={{
+          '--plan-channel-width': `${PLAN_CHANNEL_WIDTH}px`,
+          '--plan-time-width': `${planWindow.timeWidth}px`,
+          '--plan-visible-time-width': `${planWindow.visibleTimeWidth}px`
+        }}
+        onClick={event => event.stopPropagation()}
+      >
         <header className="programme-modal-header">
           <div>
             <p className="eyebrow">My programme</p>
@@ -470,8 +486,8 @@ function ProgrammePlanModal({ date, entries, onClose, onRemove, onSelect }) {
             <div className="plan-grid">
               <div className="plan-channel-head">Channel</div>
               <div className="plan-time-head">
-                {Array.from({ length: 9 }, (_, index) => index * 3).map(hour => (
-                  <span key={hour} style={{ left: `${(hour / 24) * 100}%` }}>{String(hour).padStart(2, '0')}:00</span>
+                {planWindow.ticks.map(tick => (
+                  <span key={tick.value} style={{ left: `${tick.left}%` }}>{tick.label}</span>
                 ))}
               </div>
               {entries.map(entry => (
@@ -481,7 +497,7 @@ function ProgrammePlanModal({ date, entries, onClose, onRemove, onSelect }) {
                     <strong>{entry.channel?.name || entry.programme.channelId}</strong>
                   </button>
                   <div className="plan-track">
-                    <button className="plan-bar" style={planBarStyle(entry.programme)} onClick={() => onSelect(entry)}>
+                    <button className="plan-bar" style={planBarStyle(entry.programme, planWindow)} onClick={() => onSelect(entry)}>
                       <strong>{entry.programme.title}</strong>
                       <span>{formatTime(entry.programme.start)} - {formatTime(entry.programme.stop)}</span>
                     </button>
@@ -501,16 +517,66 @@ function ProgrammePlanModal({ date, entries, onClose, onRemove, onSelect }) {
   )
 }
 
-function planBarStyle(programme) {
+function createPlanWindow(entries) {
+  if (!entries.length) {
+    return {
+      startMs: 0,
+      endMs: 60 * 60 * 1000,
+      timeWidth: PLAN_HOUR_WIDTH,
+      visibleTimeWidth: PLAN_HOUR_WIDTH,
+      ticks: []
+    }
+  }
+
+  const starts = entries.map(entry => new Date(entry.programme.start).getTime())
+  const stops = entries.map(entry => new Date(entry.programme.stop).getTime())
+  const startMs = Math.min(...starts)
+  const naturalEndMs = Math.max(...stops)
+  const minimumEndMs = startMs + 60 * 60 * 1000
+  const endMs = Math.max(naturalEndMs, minimumEndMs)
+  const spanHours = (endMs - startMs) / 3600000
+  const visibleHours = Math.min(spanHours, PLAN_MAX_VISIBLE_HOURS)
+
+  return {
+    startMs,
+    endMs,
+    timeWidth: Math.ceil(spanHours * PLAN_HOUR_WIDTH),
+    visibleTimeWidth: Math.ceil(visibleHours * PLAN_HOUR_WIDTH),
+    ticks: planTicks(startMs, endMs)
+  }
+}
+
+function planTicks(startMs, endMs) {
+  const spanMs = endMs - startMs
+  const intervalMs = spanMs <= 90 * 60 * 1000 ? 30 * 60 * 1000 : 60 * 60 * 1000
+  const ticks = [
+    { value: startMs, left: 0, label: formatTime(startMs) }
+  ]
+  let cursor = Math.ceil(startMs / intervalMs) * intervalMs
+  while (cursor < endMs) {
+    if (cursor > startMs + 5 * 60 * 1000) {
+      ticks.push({
+        value: cursor,
+        left: ((cursor - startMs) / spanMs) * 100,
+        label: formatTime(cursor)
+      })
+    }
+    cursor += intervalMs
+  }
+  if (endMs - ticks[ticks.length - 1].value > 10 * 60 * 1000) {
+    ticks.push({ value: endMs, left: 100, label: formatTime(endMs) })
+  }
+  return ticks
+}
+
+function planBarStyle(programme, planWindow) {
   const start = new Date(programme.start)
   const stop = new Date(programme.stop)
-  const dayStart = new Date(`${programmeDate(programme)}T00:00:00`)
-  const dayStartMs = dayStart.getTime()
-  const dayEndMs = dayStartMs + 24 * 60 * 60 * 1000
-  const visibleStart = Math.max(start.getTime(), dayStartMs)
-  const visibleStop = Math.min(stop.getTime(), dayEndMs)
-  const left = ((visibleStart - dayStartMs) / (dayEndMs - dayStartMs)) * 100
-  const width = Math.max(2, ((visibleStop - visibleStart) / (dayEndMs - dayStartMs)) * 100)
+  const visibleStart = Math.max(start.getTime(), planWindow.startMs)
+  const visibleStop = Math.min(stop.getTime(), planWindow.endMs)
+  const spanMs = planWindow.endMs - planWindow.startMs
+  const left = ((visibleStart - planWindow.startMs) / spanMs) * 100
+  const width = Math.max(2, ((visibleStop - visibleStart) / spanMs) * 100)
   return {
     left: `${left}%`,
     width: `${width}%`

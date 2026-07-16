@@ -695,7 +695,7 @@ h1 {
 }
 
 .programme-modal {
-  width: min(1040px, 100%);
+  width: min(calc(var(--plan-channel-width) + var(--plan-visible-time-width)), calc(100vw - 36px));
   max-height: min(760px, calc(100vh - 36px));
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -721,13 +721,14 @@ h1 {
 }
 
 .plan-scroll {
+  width: min(calc(var(--plan-channel-width) + var(--plan-visible-time-width)), calc(100vw - 36px));
   overflow: auto;
 }
 
 .plan-grid {
-  min-width: 760px;
+  width: calc(var(--plan-channel-width) + var(--plan-time-width));
   display: grid;
-  grid-template-columns: 180px minmax(560px, 1fr);
+  grid-template-columns: var(--plan-channel-width) var(--plan-time-width);
   grid-auto-rows: 58px;
 }
 
@@ -761,7 +762,7 @@ h1 {
   top: 0;
   height: 58px;
   background-image: linear-gradient(to right, transparent calc(12.5% - 1px), rgba(255,255,255,.08) 1px);
-  background-size: 12.5% 100%;
+  background-size: 190px 100%;
 }
 
 .plan-time-head span {
@@ -804,7 +805,7 @@ h1 {
 .plan-track {
   position: relative;
   background-image: linear-gradient(to right, transparent calc(12.5% - 1px), rgba(255,255,255,.055) 1px);
-  background-size: 12.5% 100%;
+  background-size: 190px 100%;
 }
 
 .plan-bar {
@@ -974,11 +975,6 @@ h1 {
 
   .programme-modal {
     max-height: calc(100vh - 20px);
-  }
-
-  .plan-grid {
-    min-width: 680px;
-    grid-template-columns: 138px minmax(520px, 1fr);
   }
 
   .plan-channel {
