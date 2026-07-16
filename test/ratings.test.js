@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { enrichProgrammeMetadata, getRatingQueueStatus } from '../server/ratings.js'
+import { enrichProgrammeMetadata, getRatingQueueStatus, lookupProgrammeRating } from '../server/ratings.js'
 
 test('rating enrichment queues media and applies resolved internal DB scores', async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tvguide-ratings-'))
@@ -41,6 +41,44 @@ test('rating enrichment queues media and applies resolved internal DB scores', a
     assert.equal(secondPass[0].media.rating, 7.4)
     assert.equal(secondPass[0].media.ratingColor, 'light-green')
     assert.equal(secondPass[0].media.genre, 'Drama')
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('targeted movie lookup saves a score from provider cache', async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tvguide-rating-lookup-'))
+  try {
+    const providerCacheDir = path.join(dataDir, 'cache', 'ratings-v1')
+    fs.mkdirSync(providerCacheDir, { recursive: true })
+    fs.writeFileSync(path.join(providerCacheDir, 'omdb-movie-test-movie-2024.json'), JSON.stringify({
+      Response: 'True',
+      Title: 'Test Movie',
+      Year: '2024',
+      imdbRating: '7.8',
+      Genre: 'Thriller, Drama'
+    }))
+
+    const programme = {
+      id: 'movie-2',
+      channelId: 'vrt1',
+      title: 'Test Movie',
+      category: 'Films',
+      start: '2026-07-16T20:00:00.000Z',
+      stop: '2026-07-16T22:00:00.000Z',
+      year: '2024'
+    }
+
+    const result = await lookupProgrammeRating(programme, dataDir, {
+      enabled: true,
+      omdbApiKey: 'test-key',
+      force: false
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.programme.media.rating, 7.8)
+    assert.equal(result.programme.media.ratingColor, 'light-green')
+    assert.equal(getRatingQueueStatus(dataDir).counts.resolved, 1)
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true })
   }

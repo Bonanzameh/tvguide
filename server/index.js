@@ -11,6 +11,7 @@ import { fetchPickxGuide } from './pickx.js'
 import {
   enrichProgrammeMetadata,
   getRatingQueueStatus,
+  lookupProgrammeRating,
   processRatingQueue,
   startRatingWorker
 } from './ratings.js'
@@ -365,6 +366,25 @@ app.post('/api/ratings/process', async (req, res, next) => {
       batchSize: req.body?.batchSize || ratingWorkerBatchSize,
       dailyLimit: req.body?.dailyLimit || ratingWorkerDailyLimit,
       maxLookups: req.body?.maxLookups || ratingsMaxLookups
+    }))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/ratings/lookup', async (req, res, next) => {
+  try {
+    if (!req.body?.programme) {
+      res.status(400).json({ error: 'programme is required' })
+      return
+    }
+    res.json(await lookupProgrammeRating(req.body.programme, dataDir, {
+      enabled: ratingsEnabled,
+      omdbApiKey,
+      timeoutMs: fetchTimeoutMs,
+      dailyLimit: ratingWorkerDailyLimit,
+      maxLookups: Math.min(ratingsMaxLookups, 8),
+      force: true
     }))
   } catch (error) {
     next(error)

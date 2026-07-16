@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Bookmark, BookmarkCheck, CalendarDays, ChevronLeft, ChevronRight, Clock, Menu, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { Bookmark, BookmarkCheck, CalendarDays, ChevronLeft, ChevronRight, Clock, Menu, RefreshCw, Search, Trash2, X } from 'lucide-react'
 import { detailMeta, scoreMeta } from './detailMeta.js'
 import './styles.css'
 
@@ -48,8 +48,10 @@ function App() {
   const [query, setQuery] = useState('')
   const [group, setGroup] = useState('All')
   const [groupMenuOpen, setGroupMenuOpen] = useState(false)
-  const [showProgrammeMenu, setShowProgrammeMenu] = useState(false)
+  const [programmeModalOpen, setProgrammeModalOpen] = useState(false)
   const [watchlist, setWatchlist] = useState(readWatchlist)
+  const [lookupLoading, setLookupLoading] = useState(false)
+  const [lookupMessage, setLookupMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const headerRef = useRef(null)
@@ -81,6 +83,10 @@ function App() {
     localStorage.setItem(WATCHLIST_STORAGE_KEY, JSON.stringify(watchlist))
   }, [watchlist])
 
+  useEffect(() => {
+    setLookupMessage('')
+  }, [selected?.id])
+
   const groups = useMemo(() => ['All', ...new Set((guide?.channels || []).map(channel => channel.group).filter(Boolean))], [guide])
   const filteredChannels = useMemo(() => {
     const term = query.trim().toLowerCase()
@@ -100,6 +106,12 @@ function App() {
     return map
   }, [guide])
 
+  const channelById = useMemo(() => {
+    const map = new Map()
+    for (const channel of guide?.channels || []) map.set(channel.id, channel)
+    return map
+  }, [guide])
+
   const programmeByKey = useMemo(() => {
     const map = new Map()
     for (const programme of guide?.programmes || []) map.set(programmeKey(programme), programme)
@@ -111,10 +123,11 @@ function App() {
       .filter(entry => entry.date === date)
       .map(entry => ({
         ...entry,
-        programme: programmeByKey.get(entry.key) || entry.programme
+        programme: programmeByKey.get(entry.key) || entry.programme,
+        channel: channelById.get((programmeByKey.get(entry.key) || entry.programme).channelId)
       }))
       .sort((a, b) => a.programme.start.localeCompare(b.programme.start))
-  ), [date, programmeByKey, watchlist])
+  ), [channelById, date, programmeByKey, watchlist])
 
   const dayStart = new Date(`${date}T00:00:00`)
   const nowOffset = Math.max(0, Math.min(24 * HOUR_WIDTH, ((Date.now() - dayStart.getTime()) / 3600000) * HOUR_WIDTH))
@@ -189,6 +202,58 @@ function App() {
   function selectWatchEntry(entry) {
     setSelected(entry.programme)
     setGroupMenuOpen(false)
+    setProgrammeModalOpen(false)
+  }
+
+  function openProgrammeModal() {
+    setGroupMenuOpen(false)
+    setProgrammeModalOpen(true)
+  }
+
+  function updateProgramme(updatedProgramme) {
+    const key = programmeKey(updatedProgramme)
+    setSelected(updatedProgramme)
+    setGuide(current => {
+      if (!current) return current
+      return {
+        ...current,
+        programmes: current.programmes.map(programme => (
+          programmeKey(programme) === key ? updatedProgramme : programme
+        ))
+      }
+    })
+    setWatchlist(current => {
+      if (!current[key]) return current
+      return {
+        ...current,
+        [key]: {
+          ...current[key],
+          programme: updatedProgramme
+        }
+      }
+    })
+  }
+
+  async function lookupSelectedScore() {
+    if (!selected || lookupLoading) return
+    setLookupLoading(true)
+    setLookupMessage('')
+    try {
+      const response = await fetch('/api/ratings/lookup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ programme: selected })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Could not look up rating')
+      if (data.programme) updateProgramme(data.programme)
+      const rating = data.programme?.media?.rating
+      setLookupMessage(typeof rating === 'number' ? `Saved ${rating}/10.` : data.message || 'No score found.')
+    } catch (err) {
+      setLookupMessage(err.message)
+    } finally {
+      setLookupLoading(false)
+    }
   }
 
   const selectedScore = scoreMeta(selected)
@@ -197,6 +262,7 @@ function App() {
   const categoryMeta = selectedMeta.filter(item => item.group === 'category')
   const selectedWatchKey = programmeKey(selected)
   const selectedIsTagged = Boolean(selectedWatchKey && watchlist[selectedWatchKey])
+  const selectedCanLookup = Boolean(selected?.media?.type)
 
   return (
     <main className="shell">
@@ -225,26 +291,9 @@ function App() {
                 </button>
                 {groupMenuOpen ? (
                   <div className="group-panel">
-                    <button className="programme-menu-toggle" onClick={() => setShowProgrammeMenu(open => !open)}>
+                    <button className="programme-menu-toggle" onClick={openProgrammeModal}>
                       My programme <span>{dailyWatchlist.length}</span>
                     </button>
-                    {showProgrammeMenu ? (
-                      <div className="programme-menu-list">
-                        {dailyWatchlist.length ? dailyWatchlist.map(entry => (
-                          <div className="programme-menu-item" key={entry.key}>
-                            <button onClick={() => selectWatchEntry(entry)}>
-                              <span>{formatTime(entry.programme.start)}</span>
-                              <strong>{entry.programme.title}</strong>
-                            </button>
-                            <button className="mini-icon" onClick={() => removeWatchEntry(entry.key)} aria-label={`Remove ${entry.programme.title}`}>
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        )) : (
-                          <p>No tagged shows for this day.</p>
-                        )}
-                      </div>
-                    ) : null}
                     <div className="menu-divider" />
                     {groups.map(item => (
                       <button key={item} className={item === group ? 'active' : ''} onClick={() => chooseGroup(item)}>
@@ -276,11 +325,18 @@ function App() {
                   {selectedIsTagged ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
                   {selectedIsTagged ? 'In my programme' : 'Add to my programme'}
                 </button>
+                {selectedCanLookup ? (
+                  <button className="lookup-toggle" onClick={lookupSelectedScore} disabled={lookupLoading}>
+                    <Search size={16} />
+                    {lookupLoading ? 'Looking up...' : 'Lookup score'}
+                  </button>
+                ) : null}
               </div>
               <div className="selected-copy">
                 <h2>{selected.title}</h2>
                 {selected.subtitle ? <p className="subtitle">{selected.subtitle}</p> : null}
                 <p>{selected.desc || 'No description available from this source.'}</p>
+                {lookupMessage ? <p className="lookup-message">{lookupMessage}</p> : null}
                 {selectedScore ? (
                   <span className={selectedScore.className}>{selectedScore.label}</span>
                 ) : null}
@@ -349,6 +405,15 @@ function App() {
       </section>
 
       {loading ? <div className="loading">Loading guide...</div> : null}
+      {programmeModalOpen ? (
+        <ProgrammePlanModal
+          date={date}
+          entries={dailyWatchlist}
+          onClose={() => setProgrammeModalOpen(false)}
+          onRemove={removeWatchEntry}
+          onSelect={selectWatchEntry}
+        />
+      ) : null}
     </main>
   )
 }
@@ -386,6 +451,70 @@ function ProgrammeSlot({ programme, dayStart, selected, onClick }) {
       ) : null}
     </button>
   )
+}
+
+function ProgrammePlanModal({ date, entries, onClose, onRemove, onSelect }) {
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <section className="programme-modal" role="dialog" aria-modal="true" aria-labelledby="programme-plan-title" onClick={event => event.stopPropagation()}>
+        <header className="programme-modal-header">
+          <div>
+            <p className="eyebrow">My programme</p>
+            <h2 id="programme-plan-title">{formatDay(date)}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} aria-label="Close my programme"><X size={18} /></button>
+        </header>
+
+        {entries.length ? (
+          <div className="plan-scroll">
+            <div className="plan-grid">
+              <div className="plan-channel-head">Channel</div>
+              <div className="plan-time-head">
+                {Array.from({ length: 9 }, (_, index) => index * 3).map(hour => (
+                  <span key={hour} style={{ left: `${(hour / 24) * 100}%` }}>{String(hour).padStart(2, '0')}:00</span>
+                ))}
+              </div>
+              {entries.map(entry => (
+                <React.Fragment key={entry.key}>
+                  <button className="plan-channel" onClick={() => onSelect(entry)}>
+                    <span>{entry.channel?.number || '-'}</span>
+                    <strong>{entry.channel?.name || entry.programme.channelId}</strong>
+                  </button>
+                  <div className="plan-track">
+                    <button className="plan-bar" style={planBarStyle(entry.programme)} onClick={() => onSelect(entry)}>
+                      <strong>{entry.programme.title}</strong>
+                      <span>{formatTime(entry.programme.start)} - {formatTime(entry.programme.stop)}</span>
+                    </button>
+                    <button className="plan-remove" onClick={() => onRemove(entry.key)} aria-label={`Remove ${entry.programme.title}`}>
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="empty-plan">No tagged shows for this day.</p>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function planBarStyle(programme) {
+  const start = new Date(programme.start)
+  const stop = new Date(programme.stop)
+  const dayStart = new Date(`${programmeDate(programme)}T00:00:00`)
+  const dayStartMs = dayStart.getTime()
+  const dayEndMs = dayStartMs + 24 * 60 * 60 * 1000
+  const visibleStart = Math.max(start.getTime(), dayStartMs)
+  const visibleStop = Math.min(stop.getTime(), dayEndMs)
+  const left = ((visibleStart - dayStartMs) / (dayEndMs - dayStartMs)) * 100
+  const width = Math.max(2, ((visibleStop - visibleStart) / (dayEndMs - dayStartMs)) * 100)
+  return {
+    left: `${left}%`,
+    width: `${width}%`
+  }
 }
 
 createRoot(document.getElementById('root')).render(<App />)

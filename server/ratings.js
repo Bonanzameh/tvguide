@@ -28,6 +28,7 @@ function safeFilename(value) {
 }
 
 function classifyProgramme(programme) {
+  if (programme?.media?.type === 'movie' || programme?.media?.type === 'series') return programme.media.type
   const category = normalizeKey([programme.category, programme.categoryDetail].filter(Boolean).join(' '))
   if (/\b(film|films|movie|movies|cinema|speelfilm|tv film)\b/.test(category)) return 'movie'
   if (/\b(serie|series|fiction)\b/.test(category)) return 'series'
@@ -226,9 +227,10 @@ function withProgrammeMedia(programme, mediaType, metadata = null) {
 }
 
 async function resolveTvMazeSeries(programme, cacheDir, budget, options = {}) {
+  const force = options.force === true
   const showKey = safeFilename(programme.title)
   const showFile = path.join(cacheDir, `tvmaze-show-${showKey}.json`)
-  let show = readJson(showFile, undefined)
+  let show = force ? undefined : readJson(showFile, undefined)
 
   if (show === undefined) {
     if (!budget.take()) return null
@@ -241,7 +243,7 @@ async function resolveTvMazeSeries(programme, cacheDir, budget, options = {}) {
   let episode = null
   if (programme.season && programme.episode) {
     const episodeFile = path.join(cacheDir, `tvmaze-episode-${show.id}-${programme.season}-${programme.episode}.json`)
-    episode = readJson(episodeFile, undefined)
+    episode = force ? undefined : readJson(episodeFile, undefined)
     if (episode === undefined) {
       if (!budget.take()) return null
       episode = await fetchJson(`${TVMAZE_BASE}/shows/${show.id}/episodebynumber?season=${programme.season}&number=${programme.episode}`, options)
@@ -252,7 +254,7 @@ async function resolveTvMazeSeries(programme, cacheDir, budget, options = {}) {
 
   if (!episode && programme.subtitle) {
     const episodesFile = path.join(cacheDir, `tvmaze-episodes-${show.id}.json`)
-    let episodes = readJson(episodesFile, undefined)
+    let episodes = force ? undefined : readJson(episodesFile, undefined)
     if (episodes === undefined) {
       if (!budget.take()) return null
       episodes = await fetchJson(`${TVMAZE_BASE}/shows/${show.id}/episodes`, options)
@@ -277,10 +279,11 @@ async function resolveTvMazeSeries(programme, cacheDir, budget, options = {}) {
 
 async function resolveOmdbMovie(programme, cacheDir, apiKey, budget, options = {}) {
   if (!apiKey) return null
+  const force = options.force === true
   const year = programmeYear(programme)
   const movieKey = safeFilename(programme.title)
   const movieFile = path.join(cacheDir, `omdb-movie-${movieKey}-${year || 'unknown'}.json`)
-  let data = readJson(movieFile, undefined)
+  let data = force ? undefined : readJson(movieFile, undefined)
   if (data === undefined) {
     if (!budget.take()) return null
     const params = new URLSearchParams({
@@ -351,6 +354,96 @@ function ratingStatus(db, extra = {}) {
   }
 }
 
+function emptyProcessSummary(extra = {}) {
+  return {
+    enabled: true,
+    processed: 0,
+    resolved: 0,
+    missing: 0,
+    failed: 0,
+    blocked: 0,
+    deferred: 0,
+    limitReached: false,
+    ...extra
+  }
+}
+
+function forceQueuedEntry(db, key, programme, mediaType) {
+  const existing = db.entries[key]
+  db.entries[key] = {
+    ...(existing || {}),
+    key,
+    status: 'queued',
+    mediaType,
+    lookup: lookupProgramme(programme),
+    attempts: existing?.attempts || 0,
+    queuedAt: existing?.queuedAt || nowIso(),
+    updatedAt: nowIso(),
+    retryAt: ''
+  }
+  return db.entries[key]
+}
+
+async function processRatingEntry(entry, db, cacheDir, budget, options, summary) {
+  if (budget.remaining <= 0) {
+    summary.limitReached = true
+    return false
+  }
+
+  entry.status = 'processing'
+  entry.attempts = (entry.attempts || 0) + 1
+  entry.updatedAt = nowIso()
+
+  try {
+    if (entry.mediaType === 'movie' && !options.omdbApiKey) {
+      entry.status = 'blocked'
+      entry.error = 'OMDB_API_KEY is required for movie ratings'
+      setRetry(entry, BLOCKED_RETRY_MS)
+      summary.blocked += 1
+      return true
+    }
+
+    const beforeUsed = budget.used
+    const beforeDenied = budget.denied
+    const metadata = entry.mediaType === 'series'
+      ? await resolveTvMazeSeries(entry.lookup, cacheDir, budget, options.fetchOptions)
+      : await resolveOmdbMovie(entry.lookup, cacheDir, options.omdbApiKey, budget, options.fetchOptions)
+
+    db.daily.used += budget.used - beforeUsed
+    if (budget.denied > beforeDenied) {
+      entry.status = 'queued'
+      setRetry(entry, 60 * 60 * 1000)
+      summary.deferred += 1
+      summary.limitReached = true
+      return false
+    }
+
+    if (metadata) {
+      entry.status = 'resolved'
+      entry.metadata = metadata
+      entry.error = ''
+      entry.retryAt = ''
+      summary.resolved += 1
+    } else {
+      entry.status = 'missing'
+      entry.metadata = null
+      entry.error = 'No rating match found'
+      setRetry(entry, MISSING_RETRY_MS)
+      summary.missing += 1
+    }
+  } catch (error) {
+    entry.status = 'failed'
+    entry.error = error.message
+    setRetry(entry, FAILED_RETRY_MS)
+    summary.failed += 1
+  } finally {
+    entry.updatedAt = nowIso()
+    summary.processed += 1
+  }
+
+  return true
+}
+
 export async function enrichProgrammeMetadata(programmes, dataDir, options = {}) {
   const enabled = options.enabled !== false
   if (!enabled) {
@@ -396,77 +489,73 @@ async function processRatingQueueNow(dataDir, options = {}) {
   const fetchOptions = { timeoutMs: options.timeoutMs || DEFAULT_TIMEOUT_MS }
   const omdbApiKey = options.omdbApiKey || ''
   const budget = createLookupBudget(Math.min(remainingToday, positiveNumber(options.maxLookups, batchSize * 4)))
-  const summary = {
-    enabled: true,
-    processed: 0,
-    resolved: 0,
-    missing: 0,
-    failed: 0,
-    blocked: 0,
-    deferred: 0,
-    limitReached: false
-  }
+  const summary = emptyProcessSummary()
 
   for (const entry of queue) {
-    if (budget.remaining <= 0) {
-      summary.limitReached = true
-      break
-    }
-
-    entry.status = 'processing'
-    entry.attempts = (entry.attempts || 0) + 1
-    entry.updatedAt = nowIso()
-
-    try {
-      if (entry.mediaType === 'movie' && !omdbApiKey) {
-        entry.status = 'blocked'
-        entry.error = 'OMDB_API_KEY is required for movie ratings'
-        setRetry(entry, BLOCKED_RETRY_MS)
-        summary.blocked += 1
-        continue
-      }
-
-      const beforeUsed = budget.used
-      const beforeDenied = budget.denied
-      const metadata = entry.mediaType === 'series'
-        ? await resolveTvMazeSeries(entry.lookup, cacheDir, budget, fetchOptions)
-        : await resolveOmdbMovie(entry.lookup, cacheDir, omdbApiKey, budget, fetchOptions)
-
-      db.daily.used += budget.used - beforeUsed
-      if (budget.denied > beforeDenied) {
-        entry.status = 'queued'
-        setRetry(entry, 60 * 60 * 1000)
-        summary.deferred += 1
-        summary.limitReached = true
-        break
-      }
-
-      if (metadata) {
-        entry.status = 'resolved'
-        entry.metadata = metadata
-        entry.error = ''
-        entry.retryAt = ''
-        summary.resolved += 1
-      } else {
-        entry.status = 'missing'
-        entry.metadata = null
-        entry.error = 'No rating match found'
-        setRetry(entry, MISSING_RETRY_MS)
-        summary.missing += 1
-      }
-    } catch (error) {
-      entry.status = 'failed'
-      entry.error = error.message
-      setRetry(entry, FAILED_RETRY_MS)
-      summary.failed += 1
-    } finally {
-      entry.updatedAt = nowIso()
-      summary.processed += 1
-    }
+    const shouldContinue = await processRatingEntry(entry, db, cacheDir, budget, {
+      omdbApiKey,
+      fetchOptions
+    }, summary)
+    if (!shouldContinue || summary.limitReached) break
   }
 
   writeRatingDb(dataDir, db)
   return ratingStatus(db, summary)
+}
+
+export async function lookupProgrammeRating(programme, dataDir, options = {}) {
+  const enabled = options.enabled !== false
+  const db = readRatingDb(dataDir)
+  const mediaType = classifyProgramme(programme)
+  if (!enabled || !mediaType) {
+    return {
+      ok: false,
+      status: enabled ? 'unsupported' : 'disabled',
+      message: enabled ? 'Only movies and series can be rated.' : 'Rating lookups are disabled.',
+      programme,
+      ratingQueue: ratingStatus(db)
+    }
+  }
+
+  const dailyLimit = positiveNumber(options.dailyLimit, DEFAULT_DAILY_LIMIT)
+  const remainingToday = Math.max(0, dailyLimit - (db.daily?.used || 0))
+  const key = ratingLookupKey(programme, mediaType)
+  const entry = forceQueuedEntry(db, key, programme, mediaType)
+
+  if (remainingToday <= 0) {
+    entry.status = 'queued'
+    entry.error = 'Daily rating lookup limit reached'
+    setRetry(entry, 24 * 60 * 60 * 1000)
+    writeRatingDb(dataDir, db)
+    return {
+      ok: false,
+      status: 'queued',
+      message: entry.error,
+      programme: withProgrammeMedia(programme, mediaType, metadataFromEntry(entry)),
+      ratingQueue: ratingStatus(db, { limitReached: true })
+    }
+  }
+
+  const cacheDir = providerCacheDir(dataDir)
+  fs.mkdirSync(cacheDir, { recursive: true })
+  const budget = createLookupBudget(Math.min(remainingToday, positiveNumber(options.maxLookups, 8)))
+  const summary = emptyProcessSummary({ targeted: true })
+  await processRatingEntry(entry, db, cacheDir, budget, {
+    omdbApiKey: options.omdbApiKey || '',
+    fetchOptions: {
+      timeoutMs: options.timeoutMs || DEFAULT_TIMEOUT_MS,
+      force: options.force === true
+    }
+  }, summary)
+
+  writeRatingDb(dataDir, db)
+  return {
+    ok: entry.status === 'resolved',
+    status: entry.status,
+    message: entry.error || (entry.status === 'resolved' ? 'Rating saved.' : 'No rating saved.'),
+    programme: withProgrammeMedia(programme, mediaType, metadataFromEntry(entry)),
+    ratingQueue: ratingStatus(db, summary)
+  }
 }
 
 export async function processRatingQueue(dataDir, options = {}) {
