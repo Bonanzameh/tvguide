@@ -324,16 +324,18 @@ function App() {
                     </div>
                   ) : null}
                 </div>
-                <button className={`watch-toggle ${selectedIsTagged ? 'active' : ''}`} onClick={toggleSelectedWatch}>
-                  {selectedIsTagged ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
-                  {selectedIsTagged ? 'In my programme' : 'Add to my programme'}
-                </button>
-                {selectedCanLookup ? (
-                  <button className="lookup-toggle" onClick={lookupSelectedScore} disabled={lookupLoading}>
-                    <Search size={16} />
-                    {lookupLoading ? 'Looking up...' : 'Lookup score'}
+                <div className="detail-actions">
+                  <button className={`watch-toggle ${selectedIsTagged ? 'active' : ''}`} onClick={toggleSelectedWatch}>
+                    {selectedIsTagged ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
+                    {selectedIsTagged ? 'Added' : 'Add'}
                   </button>
-                ) : null}
+                  {selectedCanLookup ? (
+                    <button className="lookup-toggle" onClick={lookupSelectedScore} disabled={lookupLoading}>
+                      <Search size={16} />
+                      {lookupLoading ? 'Scan...' : 'Score'}
+                    </button>
+                  ) : null}
+                </div>
               </div>
               <div className="selected-copy">
                 <h2>{selected.title}</h2>
