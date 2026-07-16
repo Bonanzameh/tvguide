@@ -3,11 +3,19 @@ import path from 'node:path'
 
 const TVMAZE_BASE = 'https://api.tvmaze.com'
 const OMDB_BASE = 'https://www.omdbapi.com/'
-const CACHE_VERSION = 3
+const LOOKUP_VERSION = 4
+const DB_VERSION = 1
 const DEFAULT_TIMEOUT_MS = 12000
+const DEFAULT_BATCH_SIZE = 12
+const DEFAULT_DAILY_LIMIT = 900
+const FAILED_RETRY_MS = 6 * 60 * 60 * 1000
+const MISSING_RETRY_MS = 7 * 24 * 60 * 60 * 1000
+const BLOCKED_RETRY_MS = 24 * 60 * 60 * 1000
+
+let processingPromise = null
 
 function normalizeKey(value = '') {
-  return value
+  return String(value)
     .toLowerCase()
     .normalize('NFD')
     .replace(/\p{Diacritic}/gu, '')
@@ -45,7 +53,10 @@ function readJson(file, fallback) {
 }
 
 function writeJson(file, value) {
-  fs.writeFileSync(file, JSON.stringify(value, null, 2))
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const tempFile = `${file}.${process.pid}.tmp`
+  fs.writeFileSync(tempFile, JSON.stringify(value, null, 2))
+  fs.renameSync(tempFile, file)
 }
 
 function yearFromDate(value) {
@@ -57,11 +68,56 @@ function programmeYear(programme) {
   return yearFromDate(programme.year)
 }
 
+function nowIso() {
+  return new Date().toISOString()
+}
+
+function dailyDate() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function positiveNumber(value, fallback) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function providerCacheDir(dataDir) {
+  return path.join(dataDir, 'cache', 'ratings-v1')
+}
+
+function ratingDbPath(dataDir) {
+  return path.join(dataDir, 'cache', 'rating-db.json')
+}
+
+function createRatingDb() {
+  return {
+    version: DB_VERSION,
+    updatedAt: '',
+    daily: { date: dailyDate(), used: 0 },
+    entries: {}
+  }
+}
+
+function readRatingDb(dataDir) {
+  const db = readJson(ratingDbPath(dataDir), createRatingDb())
+  if (!db || typeof db !== 'object') return createRatingDb()
+  if (db.version !== DB_VERSION || !db.entries || typeof db.entries !== 'object') return createRatingDb()
+  if (!db.daily || db.daily.date !== dailyDate()) {
+    db.daily = { date: dailyDate(), used: 0 }
+  }
+  return db
+}
+
+function writeRatingDb(dataDir, db) {
+  db.updatedAt = nowIso()
+  writeJson(ratingDbPath(dataDir), db)
+}
+
 async function fetchJson(url, options = {}) {
   const { timeoutMs = DEFAULT_TIMEOUT_MS } = options
   const response = await fetch(url, {
     signal: AbortSignal.timeout(timeoutMs),
-    headers: { 'user-agent': 'BelgianTVGuide/0.3' }
+    headers: { 'user-agent': 'BelgianTVGuide/0.4' }
   })
   if (response.status === 404) return null
   if (!response.ok) throw new Error(`${url} returned ${response.status}`)
@@ -71,10 +127,100 @@ async function fetchJson(url, options = {}) {
 function createLookupBudget(maxLookups) {
   return {
     remaining: maxLookups,
+    used: 0,
+    denied: 0,
     take() {
-      if (this.remaining <= 0) return false
+      if (this.remaining <= 0) {
+        this.denied += 1
+        return false
+      }
       this.remaining -= 1
+      this.used += 1
       return true
+    }
+  }
+}
+
+function mediaGenre(programme, metadata) {
+  return metadata?.genres?.[0] || programme.categoryDetail || programme.category || ''
+}
+
+function lookupProgramme(programme) {
+  return {
+    title: programme.title || '',
+    subtitle: programme.subtitle || '',
+    season: programme.season || '',
+    episode: programme.episode || '',
+    year: programme.year || '',
+    category: programme.category || '',
+    categoryDetail: programme.categoryDetail || ''
+  }
+}
+
+function ratingLookupKey(programme, mediaType) {
+  const base = [
+    LOOKUP_VERSION,
+    mediaType,
+    normalizeKey(programme.title)
+  ]
+  if (mediaType === 'series') {
+    base.push(programme.season || '', programme.episode || '', normalizeKey(programme.subtitle))
+  } else {
+    base.push(programmeYear(programme))
+  }
+  return base.join('|')
+}
+
+function retryDue(entry, currentTime) {
+  if (!entry?.retryAt) return true
+  return Date.parse(entry.retryAt) <= currentTime
+}
+
+function shouldQueueEntry(entry, currentTime) {
+  if (!entry) return true
+  if (entry.status === 'resolved' || entry.status === 'queued' || entry.status === 'processing') return false
+  if (entry.status === 'missing' || entry.status === 'failed' || entry.status === 'blocked') return retryDue(entry, currentTime)
+  return true
+}
+
+function enqueueLookup(db, key, programme, mediaType) {
+  const currentTime = Date.now()
+  const existing = db.entries[key]
+  if (!shouldQueueEntry(existing, currentTime)) return false
+
+  db.entries[key] = {
+    ...(existing || {}),
+    key,
+    status: 'queued',
+    mediaType,
+    lookup: lookupProgramme(programme),
+    attempts: existing?.attempts || 0,
+    queuedAt: existing?.queuedAt || nowIso(),
+    updatedAt: nowIso(),
+    retryAt: ''
+  }
+  return true
+}
+
+function metadataFromEntry(entry) {
+  if (entry?.status !== 'resolved' || !entry.metadata) return null
+  return entry.metadata
+}
+
+function withProgrammeMedia(programme, mediaType, metadata = null) {
+  const score = typeof metadata?.rating === 'number' ? metadata.rating : null
+  return {
+    ...programme,
+    media: {
+      type: mediaType,
+      label: mediaType === 'movie' ? 'M' : 'S',
+      rating: score,
+      ratingSource: metadata?.ratingSource || '',
+      ratingColor: ratingColor(score),
+      externalTitle: metadata?.externalTitle || '',
+      externalEpisode: metadata?.externalEpisode || '',
+      year: metadata?.year || programme.year || '',
+      genre: mediaGenre(programme, metadata)
     }
   }
 }
@@ -159,8 +305,50 @@ async function resolveOmdbMovie(programme, cacheDir, apiKey, budget, options = {
   }
 }
 
-function mediaGenre(programme, metadata) {
-  return metadata?.genres?.[0] || programme.categoryDetail || programme.category || ''
+function dueEntries(db) {
+  const currentTime = Date.now()
+  return Object.values(db.entries)
+    .filter(entry => {
+      if (entry.status === 'queued') return retryDue(entry, currentTime)
+      if (entry.status === 'processing') return true
+      if (entry.status === 'failed' || entry.status === 'blocked' || entry.status === 'missing') {
+        return retryDue(entry, currentTime)
+      }
+      return false
+    })
+    .sort((a, b) => String(a.updatedAt || a.queuedAt).localeCompare(String(b.updatedAt || b.queuedAt)))
+}
+
+function countStatuses(db) {
+  const counts = {
+    total: 0,
+    queued: 0,
+    resolved: 0,
+    missing: 0,
+    failed: 0,
+    blocked: 0,
+    processing: 0
+  }
+  for (const entry of Object.values(db.entries || {})) {
+    counts.total += 1
+    counts[entry.status] = (counts[entry.status] || 0) + 1
+  }
+  return counts
+}
+
+function setRetry(entry, delayMs) {
+  entry.retryAt = new Date(Date.now() + delayMs).toISOString()
+}
+
+function ratingStatus(db, extra = {}) {
+  return {
+    version: db.version,
+    updatedAt: db.updatedAt || '',
+    daily: db.daily,
+    counts: countStatuses(db),
+    due: dueEntries(db).length,
+    ...extra
+  }
 }
 
 export async function enrichProgrammeMetadata(programmes, dataDir, options = {}) {
@@ -168,67 +356,145 @@ export async function enrichProgrammeMetadata(programmes, dataDir, options = {})
   if (!enabled) {
     return programmes.map(programme => {
       const mediaType = classifyProgramme(programme)
-      return mediaType ? {
-        ...programme,
-        media: {
-          type: mediaType,
-          label: mediaType === 'movie' ? 'M' : 'S',
-          year: programme.year || '',
-          genre: mediaGenre(programme)
-        }
-      } : programme
+      return mediaType ? withProgrammeMedia(programme, mediaType) : programme
     })
   }
 
-  const cacheDir = path.join(dataDir, 'cache', 'ratings-v1')
-  fs.mkdirSync(cacheDir, { recursive: true })
-  const budget = createLookupBudget(options.maxLookups || 80)
-  const omdbApiKey = options.omdbApiKey || ''
-  const fetchOptions = { timeoutMs: options.timeoutMs || DEFAULT_TIMEOUT_MS }
-  const metadataCache = new Map()
-
-  const output = []
-  for (const programme of programmes) {
+  const db = readRatingDb(dataDir)
+  let changed = false
+  const output = programmes.map(programme => {
     const mediaType = classifyProgramme(programme)
-    if (!mediaType) {
-      output.push(programme)
-      continue
-    }
+    if (!mediaType) return programme
 
-    const metadataKey = [
-      CACHE_VERSION,
-      mediaType,
-      normalizeKey(programme.title),
-      normalizeKey(programme.subtitle),
-      programme.season || '',
-      programme.episode || '',
-      programmeYear(programme)
-    ].join('|')
+    const key = ratingLookupKey(programme, mediaType)
+    if (enqueueLookup(db, key, programme, mediaType)) changed = true
+    return withProgrammeMedia(programme, mediaType, metadataFromEntry(db.entries[key]))
+  })
 
-    let metadata = metadataCache.get(metadataKey)
-    if (metadata === undefined) {
-      metadata = mediaType === 'series'
-        ? await resolveTvMazeSeries(programme, cacheDir, budget, fetchOptions)
-        : await resolveOmdbMovie(programme, cacheDir, omdbApiKey, budget, fetchOptions)
-      metadataCache.set(metadataKey, metadata || null)
-    }
+  if (changed) writeRatingDb(dataDir, db)
+  return output
+}
 
-    const score = metadata?.rating || null
-    output.push({
-      ...programme,
-      media: {
-        type: mediaType,
-        label: mediaType === 'movie' ? 'M' : 'S',
-        rating: score,
-        ratingSource: metadata?.ratingSource || '',
-        ratingColor: ratingColor(score),
-        externalTitle: metadata?.externalTitle || '',
-        externalEpisode: metadata?.externalEpisode || '',
-        year: metadata?.year || programme.year || '',
-        genre: mediaGenre(programme, metadata)
-      }
-    })
+async function processRatingQueueNow(dataDir, options = {}) {
+  const enabled = options.enabled !== false
+  const db = readRatingDb(dataDir)
+  if (!enabled) return ratingStatus(db, { enabled: false })
+
+  const batchSize = Math.min(positiveNumber(options.batchSize, DEFAULT_BATCH_SIZE), 100)
+  const dailyLimit = positiveNumber(options.dailyLimit, DEFAULT_DAILY_LIMIT)
+  const remainingToday = Math.max(0, dailyLimit - (db.daily?.used || 0))
+  if (remainingToday <= 0) {
+    return ratingStatus(db, { enabled: true, processed: 0, limitReached: true })
   }
 
-  return output
+  const queue = dueEntries(db).slice(0, batchSize)
+  if (!queue.length) return ratingStatus(db, { enabled: true, processed: 0, limitReached: false })
+
+  const cacheDir = providerCacheDir(dataDir)
+  fs.mkdirSync(cacheDir, { recursive: true })
+
+  const fetchOptions = { timeoutMs: options.timeoutMs || DEFAULT_TIMEOUT_MS }
+  const omdbApiKey = options.omdbApiKey || ''
+  const budget = createLookupBudget(Math.min(remainingToday, positiveNumber(options.maxLookups, batchSize * 4)))
+  const summary = {
+    enabled: true,
+    processed: 0,
+    resolved: 0,
+    missing: 0,
+    failed: 0,
+    blocked: 0,
+    deferred: 0,
+    limitReached: false
+  }
+
+  for (const entry of queue) {
+    if (budget.remaining <= 0) {
+      summary.limitReached = true
+      break
+    }
+
+    entry.status = 'processing'
+    entry.attempts = (entry.attempts || 0) + 1
+    entry.updatedAt = nowIso()
+
+    try {
+      if (entry.mediaType === 'movie' && !omdbApiKey) {
+        entry.status = 'blocked'
+        entry.error = 'OMDB_API_KEY is required for movie ratings'
+        setRetry(entry, BLOCKED_RETRY_MS)
+        summary.blocked += 1
+        continue
+      }
+
+      const beforeUsed = budget.used
+      const beforeDenied = budget.denied
+      const metadata = entry.mediaType === 'series'
+        ? await resolveTvMazeSeries(entry.lookup, cacheDir, budget, fetchOptions)
+        : await resolveOmdbMovie(entry.lookup, cacheDir, omdbApiKey, budget, fetchOptions)
+
+      db.daily.used += budget.used - beforeUsed
+      if (budget.denied > beforeDenied) {
+        entry.status = 'queued'
+        setRetry(entry, 60 * 60 * 1000)
+        summary.deferred += 1
+        summary.limitReached = true
+        break
+      }
+
+      if (metadata) {
+        entry.status = 'resolved'
+        entry.metadata = metadata
+        entry.error = ''
+        entry.retryAt = ''
+        summary.resolved += 1
+      } else {
+        entry.status = 'missing'
+        entry.metadata = null
+        entry.error = 'No rating match found'
+        setRetry(entry, MISSING_RETRY_MS)
+        summary.missing += 1
+      }
+    } catch (error) {
+      entry.status = 'failed'
+      entry.error = error.message
+      setRetry(entry, FAILED_RETRY_MS)
+      summary.failed += 1
+    } finally {
+      entry.updatedAt = nowIso()
+      summary.processed += 1
+    }
+  }
+
+  writeRatingDb(dataDir, db)
+  return ratingStatus(db, summary)
+}
+
+export async function processRatingQueue(dataDir, options = {}) {
+  if (processingPromise) return processingPromise
+  processingPromise = processRatingQueueNow(dataDir, options).finally(() => {
+    processingPromise = null
+  })
+  return processingPromise
+}
+
+export function getRatingQueueStatus(dataDir) {
+  return ratingStatus(readRatingDb(dataDir))
+}
+
+export function startRatingWorker(dataDir, options = {}) {
+  if (options.enabled === false) return () => {}
+
+  const intervalMs = Math.max(5000, positiveNumber(options.intervalMs, 60 * 1000))
+  const run = () => {
+    processRatingQueue(dataDir, options).catch(error => console.error('Rating worker failed', error))
+  }
+
+  const initialDelayMs = positiveNumber(options.initialDelayMs, 5000)
+  const initialTimer = setTimeout(run, initialDelayMs)
+  const interval = setInterval(run, intervalMs)
+
+  return () => {
+    clearTimeout(initialTimer)
+    clearInterval(interval)
+  }
 }

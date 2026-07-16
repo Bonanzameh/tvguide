@@ -53,8 +53,12 @@ Restart the container after changing the file.
 - `EPG_XMLTV_URLS`: empty disables XMLTV; comma-separated URLs or `file:///data/guide.xml.gz` are supported; `epg.pw` expands to `https://epg.pw/xmltv/epg.xml.gz`.
 - `EPG_FETCH_TIMEOUT_MS`: external source timeout in milliseconds. Defaults to `12000`.
 - `EPG_SAMPLE_FALLBACK`: `false` by default. Set to `true` if you want generated demo data when all real sources fail.
-- `EPG_RATINGS_ENABLED`: `true` by default. Adds movie/series badges and cached rating lookups.
-- `EPG_RATINGS_MAX_LOOKUPS`: maximum external rating lookups per guide refresh. Defaults to `80`; cached results do not count.
+- `EPG_RATINGS_ENABLED`: `true` by default. Adds movie/series badges and queues cached rating lookups.
+- `EPG_RATINGS_MAX_LOOKUPS`: maximum external rating lookups per background worker pass. Defaults to `80`; cached results do not count.
+- `EPG_RATING_WORKER_ENABLED`: `true` by default. Processes missing score lookups in the background.
+- `EPG_RATING_WORKER_INTERVAL_SECONDS`: how often the score worker polls the queue. Defaults to `60`.
+- `EPG_RATING_WORKER_BATCH_SIZE`: maximum queued programmes to inspect per worker pass. Defaults to `12`.
+- `EPG_RATING_WORKER_DAILY_LIMIT`: daily external rating lookup budget. Defaults to `900`.
 - `OMDB_API_KEY`: optional. Enables IMDb-style movie ratings through OMDb. Series episode ratings use TVMaze where a matching episode can be found.
 - `EPG_PREFETCH_DAYS`: number of guide days to keep warm in cache. Defaults to `3`.
 - `EPG_PREFETCH_INTERVAL_HOURS`: automatic cache refresh interval. Defaults to `24`.
@@ -71,7 +75,16 @@ curl -X POST http://localhost:3000/api/warm-cache \
   -d '{"days":3,"force":true}' | jq
 ```
 
-OMDb's free API key page lists a 1,000 daily request limit. The app caches movie lookups and limits new rating lookups per guide refresh with `EPG_RATINGS_MAX_LOOKUPS`, so a 3-day warm-up at the default cap is designed to stay well below that.
+Ratings have their own persistent queue in `/data/cache/rating-db.json`. Guide requests add missing movies and series to that queue, then the worker fills scores without making the page wait:
+
+```bash
+curl http://localhost:3000/api/ratings/status | jq
+curl -X POST http://localhost:3000/api/ratings/process \
+  -H 'content-type: application/json' \
+  -d '{"batchSize":25}' | jq
+```
+
+OMDb's free API key page lists a 1,000 daily request limit. The app caches movie lookups and defaults to `EPG_RATING_WORKER_DAILY_LIMIT=900`, leaving a little room for manual tests.
 
 ## Troubleshooting
 

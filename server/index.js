@@ -8,7 +8,12 @@ import { defaultChannels } from './channels.js'
 import { createSampleGuide } from './sampleGuide.js'
 import { enrichChannelLogos } from './logos.js'
 import { fetchPickxGuide } from './pickx.js'
-import { enrichProgrammeMetadata } from './ratings.js'
+import {
+  enrichProgrammeMetadata,
+  getRatingQueueStatus,
+  processRatingQueue,
+  startRatingWorker
+} from './ratings.js'
 import { ensureDataDir, parseXmltvSources } from './xmltv.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -23,6 +28,7 @@ const sampleFallbackEnabled = process.env.EPG_SAMPLE_FALLBACK === 'true'
 const ratingsEnabled = process.env.EPG_RATINGS_ENABLED !== 'false'
 const omdbApiKey = process.env.OMDB_API_KEY || ''
 const prefetchOnStart = process.env.EPG_PREFETCH_ON_START !== 'false'
+const ratingWorkerEnabled = process.env.EPG_RATING_WORKER_ENABLED !== 'false'
 
 function positiveNumber(value, fallback) {
   const parsed = Number(value)
@@ -33,6 +39,9 @@ const fetchTimeoutMs = positiveNumber(process.env.EPG_FETCH_TIMEOUT_MS, 12000)
 const ratingsMaxLookups = positiveNumber(process.env.EPG_RATINGS_MAX_LOOKUPS, 80)
 const prefetchDays = Math.min(positiveNumber(process.env.EPG_PREFETCH_DAYS, 3), 14)
 const prefetchIntervalHours = positiveNumber(process.env.EPG_PREFETCH_INTERVAL_HOURS, 24)
+const ratingWorkerIntervalSeconds = positiveNumber(process.env.EPG_RATING_WORKER_INTERVAL_SECONDS, 60)
+const ratingWorkerBatchSize = Math.min(positiveNumber(process.env.EPG_RATING_WORKER_BATCH_SIZE, 12), 100)
+const ratingWorkerDailyLimit = positiveNumber(process.env.EPG_RATING_WORKER_DAILY_LIMIT, 900)
 
 function parseXmltvUrls(setting) {
   if (!setting || !setting.trim()) return []
@@ -57,7 +66,11 @@ const sourceKey = JSON.stringify({
   ratingsMaxLookups,
   fetchTimeoutMs,
   omdb: Boolean(omdbApiKey),
-  version: 10
+  ratingWorkerEnabled,
+  ratingWorkerIntervalSeconds,
+  ratingWorkerBatchSize,
+  ratingWorkerDailyLimit,
+  version: 11
 })
 
 ensureDataDir(dataDir)
@@ -125,12 +138,49 @@ function overlapsExistingProgramme(programmes, candidate) {
   })
 }
 
+function guideStats(channels, programmes) {
+  return {
+    channels: channels.length,
+    channelsWithProgrammes: new Set(programmes.map(programme => programme.channelId)).size,
+    programmes: programmes.length,
+    mediaProgrammes: programmes.filter(programme => programme.media?.type).length,
+    ratedProgrammes: programmes.filter(programme => programme.media?.rating).length
+  }
+}
+
+async function enrichGuideProgrammes(programmes) {
+  return enrichProgrammeMetadata(programmes, dataDir, {
+    enabled: ratingsEnabled,
+    omdbApiKey,
+    timeoutMs: fetchTimeoutMs
+  })
+}
+
+async function refreshCachedGuideMetadata(cached, target) {
+  const programmes = await enrichGuideProgrammes(cached.programmes || [])
+  const stats = guideStats(cached.channels || [], programmes)
+  const refreshed = {
+    ...cached,
+    programmes,
+    stats,
+    ratingQueue: getRatingQueueStatus(dataDir)
+  }
+
+  if (JSON.stringify(cached.programmes || []) !== JSON.stringify(programmes) ||
+    JSON.stringify(cached.stats || {}) !== JSON.stringify(stats) ||
+    !cached.ratingQueue) {
+    fs.writeFileSync(target, JSON.stringify(refreshed, null, 2))
+  }
+
+  return refreshed
+}
+
 async function loadGuide(dateText, force = false) {
   const channels = await enrichChannelLogos(loadChannels(), dataDir)
   const target = cachePath(dateText)
   if (!force && fs.existsSync(target)) {
     const cached = JSON.parse(fs.readFileSync(target, 'utf8'))
-    if (cached.sourceKey === sourceKey) return cached
+    if (cached.sourceKey === sourceKey) return refreshCachedGuideMetadata(cached, target)
   }
 
   const errors = []
@@ -173,12 +223,7 @@ async function loadGuide(dateText, force = false) {
     finalProgrammes = createSampleGuide(guideChannels, dateText).programmes
   }
 
-  finalProgrammes = await enrichProgrammeMetadata(finalProgrammes, dataDir, {
-    enabled: ratingsEnabled,
-    maxLookups: ratingsMaxLookups,
-    omdbApiKey,
-    timeoutMs: fetchTimeoutMs
-  })
+  finalProgrammes = await enrichGuideProgrammes(finalProgrammes)
 
   const guide = {
     source: finalProgrammes.length ? source : `${source || 'No sources'} (no programmes found)`,
@@ -187,13 +232,8 @@ async function loadGuide(dateText, force = false) {
     channels: guideChannels,
     programmes: finalProgrammes,
     errors,
-    stats: {
-      channels: guideChannels.length,
-      channelsWithProgrammes: new Set(finalProgrammes.map(programme => programme.channelId)).size,
-      programmes: finalProgrammes.length,
-      mediaProgrammes: finalProgrammes.filter(programme => programme.media?.type).length,
-      ratedProgrammes: finalProgrammes.filter(programme => programme.media?.rating).length
-    }
+    stats: guideStats(guideChannels, finalProgrammes),
+    ratingQueue: getRatingQueueStatus(dataDir)
   }
 
   if (guide.programmes.length || !guide.errors.length) {
@@ -251,6 +291,10 @@ app.get('/api/sources', (req, res) => {
     prefetchDays,
     prefetchIntervalHours,
     prefetchOnStart,
+    ratingWorkerEnabled,
+    ratingWorkerIntervalSeconds,
+    ratingWorkerBatchSize,
+    ratingWorkerDailyLimit,
     omdbEnabled: Boolean(omdbApiKey),
     orange: {
       status: 'available-for-local-adapter',
@@ -267,6 +311,18 @@ app.get('/api/cache/status', (req, res) => {
   res.json({
     sourceKey,
     days: Array.from({ length: days }, (_, index) => cacheStatusForDate(addDays(startDate, index)))
+  })
+})
+
+app.get('/api/ratings/status', (req, res) => {
+  res.json({
+    enabled: ratingsEnabled,
+    workerEnabled: ratingWorkerEnabled,
+    intervalSeconds: ratingWorkerIntervalSeconds,
+    batchSize: ratingWorkerBatchSize,
+    dailyLimit: ratingWorkerDailyLimit,
+    omdbEnabled: Boolean(omdbApiKey),
+    ...getRatingQueueStatus(dataDir)
   })
 })
 
@@ -300,6 +356,21 @@ app.post('/api/warm-cache', async (req, res, next) => {
   }
 })
 
+app.post('/api/ratings/process', async (req, res, next) => {
+  try {
+    res.json(await processRatingQueue(dataDir, {
+      enabled: ratingsEnabled,
+      omdbApiKey,
+      timeoutMs: fetchTimeoutMs,
+      batchSize: req.body?.batchSize || ratingWorkerBatchSize,
+      dailyLimit: req.body?.dailyLimit || ratingWorkerDailyLimit,
+      maxLookups: req.body?.maxLookups || ratingsMaxLookups
+    }))
+  } catch (error) {
+    next(error)
+  }
+})
+
 const dist = path.join(__dirname, '..', 'dist')
 if (fs.existsSync(dist)) {
   app.use(express.static(dist))
@@ -312,6 +383,19 @@ app.use((error, req, res, next) => {
 })
 
 function scheduleCacheWarmup() {
+  if (ratingsEnabled && ratingWorkerEnabled) {
+    startRatingWorker(dataDir, {
+      enabled: true,
+      omdbApiKey,
+      timeoutMs: fetchTimeoutMs,
+      intervalMs: ratingWorkerIntervalSeconds * 1000,
+      batchSize: ratingWorkerBatchSize,
+      dailyLimit: ratingWorkerDailyLimit,
+      maxLookups: ratingsMaxLookups,
+      initialDelayMs: 5000
+    })
+  }
+
   if (prefetchOnStart) {
     setTimeout(() => {
       warmCache({ days: prefetchDays, force: false }).catch(error => console.error('Cache warm-up failed', error))
