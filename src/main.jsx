@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Bookmark, BookmarkCheck, CalendarDays, ChevronLeft, ChevronRight, Clock, Menu, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import { Bell, BellRing, Bookmark, BookmarkCheck, CalendarDays, ChevronLeft, ChevronRight, Clock, Heart, Menu, Monitor, RefreshCw, Search, Star, Trash2, X } from 'lucide-react'
 import { detailMeta, scoreMeta } from './detailMeta.js'
+import { dailyDigest, findConflicts, heatmapBuckets, nowNext, programmeDate, programmeGenre, programmeKey, smartTonight } from './tvFeatures.js'
 import './styles.css'
 
 const HOUR_WIDTH = 240
@@ -11,6 +12,13 @@ const PLAN_HOUR_WIDTH = 190
 const PLAN_CHANNEL_WIDTH = 180
 const PLAN_MAX_VISIBLE_HOURS = 3
 const WATCHLIST_STORAGE_KEY = 'belgian-tv-guide-watchlist-v1'
+const PROFILES_STORAGE_KEY = 'belgian-tv-guide-profiles-v1'
+const ACTIVE_PROFILE_STORAGE_KEY = 'belgian-tv-guide-active-profile-v1'
+const DEFAULT_PROFILES = {
+  Me: { favoriteChannelIds: [], likedGenres: [], reminders: {} },
+  Kids: { favoriteChannelIds: [], likedGenres: ['Kids'], reminders: {} },
+  Family: { favoriteChannelIds: [], likedGenres: [], reminders: {} }
+}
 
 function dateKey(date) {
   const copy = new Date(date)
@@ -26,21 +34,29 @@ function formatDay(value) {
   return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }).format(new Date(`${value}T12:00:00`))
 }
 
-function programmeKey(programme) {
-  if (!programme) return ''
-  return [programme.channelId, programme.start, programme.stop, programme.title].join('|')
-}
-
-function programmeDate(programme) {
-  return programme?.start ? dateKey(new Date(programme.start)) : ''
-}
-
 function readWatchlist() {
   try {
     const stored = JSON.parse(localStorage.getItem(WATCHLIST_STORAGE_KEY) || '{}')
     return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}
   } catch {
     return {}
+  }
+}
+
+function readProfiles() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PROFILES_STORAGE_KEY) || '{}')
+    return { ...DEFAULT_PROFILES, ...(stored && typeof stored === 'object' ? stored : {}) }
+  } catch {
+    return DEFAULT_PROFILES
+  }
+}
+
+function readActiveProfile() {
+  try {
+    return localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY) || 'Me'
+  } catch {
+    return 'Me'
   }
 }
 
@@ -51,8 +67,10 @@ function App() {
   const [query, setQuery] = useState('')
   const [group, setGroup] = useState('All')
   const [groupMenuOpen, setGroupMenuOpen] = useState(false)
-  const [programmeModalOpen, setProgrammeModalOpen] = useState(false)
+  const [activeModal, setActiveModal] = useState('')
   const [watchlist, setWatchlist] = useState(readWatchlist)
+  const [profiles, setProfiles] = useState(readProfiles)
+  const [activeProfileName, setActiveProfileName] = useState(readActiveProfile)
   const [lookupLoading, setLookupLoading] = useState(false)
   const [lookupMessage, setLookupMessage] = useState('')
   const [loading, setLoading] = useState(true)
@@ -87,6 +105,31 @@ function App() {
   }, [watchlist])
 
   useEffect(() => {
+    localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(profiles))
+  }, [profiles])
+
+  useEffect(() => {
+    localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, activeProfileName)
+  }, [activeProfileName])
+
+  useEffect(() => {
+    const timers = Object.values((profiles[activeProfileName] || {}).reminders || {})
+      .map(reminder => {
+        const delay = new Date(reminder.remindAt).getTime() - Date.now()
+        if (delay <= 0 || delay > 24 * 60 * 60 * 1000) return null
+        return setTimeout(() => {
+          if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            new Notification('TV reminder', {
+              body: `${reminder.programme.title} starts at ${formatTime(reminder.programme.start)}`
+            })
+          }
+        }, delay)
+      })
+      .filter(Boolean)
+    return () => timers.forEach(timer => clearTimeout(timer))
+  }, [activeProfileName, profiles])
+
+  useEffect(() => {
     setLookupMessage('')
   }, [selected?.id])
 
@@ -115,6 +158,8 @@ function App() {
     return map
   }, [guide])
 
+  const activeProfile = profiles[activeProfileName] || DEFAULT_PROFILES.Me
+
   const programmeByKey = useMemo(() => {
     const map = new Map()
     for (const programme of guide?.programmes || []) map.set(programmeKey(programme), programme)
@@ -131,6 +176,11 @@ function App() {
       }))
       .sort((a, b) => a.programme.start.localeCompare(b.programme.start))
   ), [channelById, date, programmeByKey, watchlist])
+  const watchConflicts = useMemo(() => findConflicts(dailyWatchlist), [dailyWatchlist])
+  const tonightItems = useMemo(() => smartTonight(guide?.programmes || [], guide?.channels || [], activeProfile, date), [activeProfile, date, guide])
+  const nowNextRows = useMemo(() => nowNext(guide?.programmes || [], guide?.channels || [], Date.now(), activeProfile.favoriteChannelIds || []), [activeProfile.favoriteChannelIds, guide])
+  const digest = useMemo(() => dailyDigest(guide?.programmes || [], guide?.channels || [], dailyWatchlist, activeProfile, date), [activeProfile, dailyWatchlist, date, guide])
+  const heatmap = useMemo(() => heatmapBuckets(guide?.programmes || [], date), [date, guide])
 
   const dayStart = new Date(`${date}T00:00:00`)
   const nowOffset = Math.max(0, Math.min(24 * HOUR_WIDTH, ((Date.now() - dayStart.getTime()) / 3600000) * HOUR_WIDTH))
@@ -205,12 +255,54 @@ function App() {
   function selectWatchEntry(entry) {
     setSelected(entry.programme)
     setGroupMenuOpen(false)
-    setProgrammeModalOpen(false)
+    setActiveModal('')
   }
 
-  function openProgrammeModal() {
+  function openModal(name) {
     setGroupMenuOpen(false)
-    setProgrammeModalOpen(true)
+    setActiveModal(name)
+  }
+
+  function updateActiveProfile(updater) {
+    setProfiles(current => ({
+      ...current,
+      [activeProfileName]: updater(current[activeProfileName] || DEFAULT_PROFILES.Me)
+    }))
+  }
+
+  function toggleFavoriteChannel() {
+    if (!selected?.channelId) return
+    updateActiveProfile(profile => {
+      const current = new Set(profile.favoriteChannelIds || [])
+      if (current.has(selected.channelId)) current.delete(selected.channelId)
+      else current.add(selected.channelId)
+      return { ...profile, favoriteChannelIds: [...current] }
+    })
+  }
+
+  function toggleLikedGenre() {
+    const genre = programmeGenre(selected)
+    if (!genre) return
+    updateActiveProfile(profile => {
+      const current = new Set(profile.likedGenres || [])
+      if (current.has(genre)) current.delete(genre)
+      else current.add(genre)
+      return { ...profile, likedGenres: [...current] }
+    })
+  }
+
+  async function toggleReminder() {
+    if (!selected) return
+    const key = programmeKey(selected)
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      await Notification.requestPermission().catch(() => {})
+    }
+    updateActiveProfile(profile => {
+      const reminders = { ...(profile.reminders || {}) }
+      if (reminders[key]) delete reminders[key]
+      else reminders[key] = { key, programme: selected, remindAt: new Date(new Date(selected.start).getTime() - 10 * 60000).toISOString() }
+      return { ...profile, reminders }
+    })
   }
 
   function updateProgramme(updatedProgramme) {
@@ -266,6 +358,14 @@ function App() {
   const selectedWatchKey = programmeKey(selected)
   const selectedIsTagged = Boolean(selectedWatchKey && watchlist[selectedWatchKey])
   const selectedCanLookup = Boolean(selected?.media?.type)
+  const selectedChannel = selected ? channelById.get(selected.channelId) : null
+  const selectedGenre = programmeGenre(selected)
+  const selectedIsFavoriteChannel = Boolean(selected?.channelId && (activeProfile.favoriteChannelIds || []).includes(selected.channelId))
+  const selectedIsLikedGenre = Boolean(selectedGenre && (activeProfile.likedGenres || []).includes(selectedGenre))
+  const selectedHasReminder = Boolean(selectedWatchKey && activeProfile.reminders?.[selectedWatchKey])
+  const selectedConflicts = selectedWatchKey
+    ? watchConflicts.filter(conflict => conflict.first.key === selectedWatchKey || conflict.second.key === selectedWatchKey)
+    : []
 
   return (
     <main className="shell">
@@ -294,8 +394,27 @@ function App() {
                 </button>
                 {groupMenuOpen ? (
                   <div className="group-panel">
-                    <button className="programme-menu-toggle" onClick={openProgrammeModal}>
+                    <div className="profile-row" aria-label="Profile">
+                      {Object.keys(profiles).map(name => (
+                        <button key={name} className={name === activeProfileName ? 'active' : ''} onClick={() => setActiveProfileName(name)}>
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                    <button className="programme-menu-toggle" onClick={() => openModal('programme')}>
                       My programme <span>{dailyWatchlist.length}</span>
+                    </button>
+                    <button className="programme-menu-toggle" onClick={() => openModal('tonight')}>
+                      Tonight <span>{tonightItems.length}</span>
+                    </button>
+                    <button className="programme-menu-toggle" onClick={() => openModal('now')}>
+                      Now / Next <span>{nowNextRows.length}</span>
+                    </button>
+                    <button className="programme-menu-toggle" onClick={() => openModal('digest')}>
+                      Digest <span>{digest.best.length}</span>
+                    </button>
+                    <button className="programme-menu-toggle" onClick={() => openModal('tv')}>
+                      TV mode <Monitor size={15} />
                     </button>
                     <div className="menu-divider" />
                     {groups.map(item => (
@@ -338,9 +457,26 @@ function App() {
                 </div>
               </div>
               <div className="selected-copy">
+                {selected.image ? <img className="detail-poster" src={selected.image} alt="" /> : null}
                 <h2>{selected.title}</h2>
                 {selected.subtitle ? <p className="subtitle">{selected.subtitle}</p> : null}
                 <p>{selected.desc || 'No description available from this source.'}</p>
+                {selectedChannel ? <p className="detail-channel">{selectedChannel.number ? `${selectedChannel.number} · ` : ''}{selectedChannel.name}</p> : null}
+                <div className="taste-actions">
+                  <button className={selectedIsFavoriteChannel ? 'active' : ''} onClick={toggleFavoriteChannel}>
+                    <Star size={14} />{selectedIsFavoriteChannel ? 'Fav channel' : 'Channel'}
+                  </button>
+                  {selectedGenre ? (
+                    <button className={selectedIsLikedGenre ? 'active' : ''} onClick={toggleLikedGenre}>
+                      <Heart size={14} />{selectedIsLikedGenre ? 'Liked' : 'Genre'}
+                    </button>
+                  ) : null}
+                  <button className={selectedHasReminder ? 'active' : ''} onClick={toggleReminder}>
+                    {selectedHasReminder ? <BellRing size={14} /> : <Bell size={14} />}
+                    {selectedHasReminder ? 'Remind' : '10 min'}
+                  </button>
+                </div>
+                {selectedConflicts.length ? <p className="conflict-note">Overlaps with another tagged programme.</p> : null}
                 {lookupMessage ? <p className="lookup-message">{lookupMessage}</p> : null}
                 {selectedScore ? (
                   <span className={selectedScore.className}>{selectedScore.label}</span>
@@ -362,6 +498,10 @@ function App() {
           <span>{guide.errors.map(item => `${item.source}: ${item.message}`).join(' | ')}</span>
         </div>
       ) : null}
+
+      <Heatmap buckets={heatmap} onHour={hour => {
+        if (gridRef.current) gridRef.current.scrollLeft = Math.max(0, hour * HOUR_WIDTH - 160)
+      }} />
 
       <section className="workspace">
         <div className="guide" style={{ gridTemplateColumns: `${CHANNEL_WIDTH}px minmax(0, 1fr)` }}>
@@ -410,14 +550,36 @@ function App() {
       </section>
 
       {loading ? <div className="loading">Loading guide...</div> : null}
-      {programmeModalOpen ? (
+      {activeModal === 'programme' ? (
         <ProgrammePlanModal
           date={date}
           entries={dailyWatchlist}
-          onClose={() => setProgrammeModalOpen(false)}
+          conflicts={watchConflicts}
+          onClose={() => setActiveModal('')}
           onRemove={removeWatchEntry}
           onSelect={selectWatchEntry}
         />
+      ) : null}
+      {activeModal === 'tonight' ? (
+        <SmartListModal title="Tonight" eyebrow={activeProfileName} items={tonightItems} onClose={() => setActiveModal('')} onSelect={item => {
+          setSelected(item.programme)
+          setActiveModal('')
+        }} />
+      ) : null}
+      {activeModal === 'now' ? (
+        <NowNextModal rows={nowNextRows} onClose={() => setActiveModal('')} onSelect={programme => {
+          setSelected(programme)
+          setActiveModal('')
+        }} />
+      ) : null}
+      {activeModal === 'digest' ? (
+        <DigestModal digest={digest} onClose={() => setActiveModal('')} onSelect={item => {
+          setSelected(item.programme)
+          setActiveModal('')
+        }} />
+      ) : null}
+      {activeModal === 'tv' ? (
+        <LeanBackModal selected={selected} channel={selectedChannel} onClose={() => setActiveModal('')} onLookup={lookupSelectedScore} onToggleWatch={toggleSelectedWatch} tagged={selectedIsTagged} />
       ) : null}
     </main>
   )
@@ -458,7 +620,38 @@ function ProgrammeSlot({ programme, dayStart, selected, onClick }) {
   )
 }
 
-function ProgrammePlanModal({ date, entries, onClose, onRemove, onSelect }) {
+function Heatmap({ buckets, onHour }) {
+  if (!buckets?.length) return null
+  return (
+    <section className="heatmap" aria-label="Discovery heatmap">
+      <div>
+        <strong>Discovery</strong>
+        <span>rated shows by hour</span>
+      </div>
+      <div className="heatmap-bars">
+        {buckets.map(bucket => (
+          <button
+            key={bucket.hour}
+            className={`heatmap-bar heat-${heatLevel(bucket.average)}`}
+            style={{ opacity: bucket.count ? 0.42 + Math.min(bucket.count, 8) / 14 : 0.16 }}
+            onClick={() => onHour(bucket.hour)}
+            title={`${String(bucket.hour).padStart(2, '0')}:00${bucket.average ? ` · ${bucket.average}/10` : ''}`}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function heatLevel(score) {
+  if (typeof score !== 'number') return 'empty'
+  if (score >= 8) return 'hot'
+  if (score >= 7) return 'warm'
+  if (score >= 6) return 'mild'
+  return 'low'
+}
+
+function ProgrammePlanModal({ date, entries, conflicts, onClose, onRemove, onSelect }) {
   const planWindow = createPlanWindow(entries)
 
   return (
@@ -482,6 +675,12 @@ function ProgrammePlanModal({ date, entries, onClose, onRemove, onSelect }) {
           </div>
           <button className="icon-button" onClick={onClose} aria-label="Close my programme"><X size={18} /></button>
         </header>
+
+        {conflicts?.length ? (
+          <div className="conflict-banner">
+            {conflicts.length} overlap{conflicts.length === 1 ? '' : 's'} in this plan.
+          </div>
+        ) : null}
 
         {entries.length ? (
           <div className="plan-scroll">
@@ -516,6 +715,114 @@ function ProgrammePlanModal({ date, entries, onClose, onRemove, onSelect }) {
         )}
       </section>
     </div>
+  )
+}
+
+function SmartListModal({ title, eyebrow, items, onClose, onSelect }) {
+  return (
+    <SimpleModal title={title} eyebrow={eyebrow} onClose={onClose}>
+      <div className="smart-list">
+        {items.length ? items.map(item => (
+          <ProgrammeRow key={programmeKey(item.programme)} item={item} onSelect={() => onSelect(item)} />
+        )) : <p className="empty-plan">No highlights found for this day.</p>}
+      </div>
+    </SimpleModal>
+  )
+}
+
+function NowNextModal({ rows, onClose, onSelect }) {
+  return (
+    <SimpleModal title="Now / Next" eyebrow="Live picker" onClose={onClose}>
+      <div className="now-list">
+        {rows.map(row => (
+          <div className="now-row" key={row.channel.id}>
+            <div className="now-channel"><span>{row.channel.number || '-'}</span><strong>{row.channel.name}</strong></div>
+            <button disabled={!row.current} onClick={() => row.current && onSelect(row.current)}>
+              <small>Now</small>
+              <strong>{row.current?.title || 'No current data'}</strong>
+              {row.current ? <span>{formatTime(row.current.start)} - {formatTime(row.current.stop)}</span> : null}
+            </button>
+            <button disabled={!row.next} onClick={() => row.next && onSelect(row.next)}>
+              <small>Next</small>
+              <strong>{row.next?.title || 'No next data'}</strong>
+              {row.next ? <span>{formatTime(row.next.start)} - {formatTime(row.next.stop)}</span> : null}
+            </button>
+          </div>
+        ))}
+      </div>
+    </SimpleModal>
+  )
+}
+
+function DigestModal({ digest, onClose, onSelect }) {
+  const sections = [
+    ['Best', digest.best],
+    ['Movies', digest.movies],
+    ['Series', digest.series],
+    ['Kids', digest.kids],
+    ['Tonight', digest.tonight]
+  ]
+  return (
+    <SimpleModal title="Daily digest" eyebrow={digest.conflicts.length ? `${digest.conflicts.length} watch conflict${digest.conflicts.length === 1 ? '' : 's'}` : 'No conflicts'} onClose={onClose}>
+      <div className="digest-grid">
+        {sections.map(([label, items]) => (
+          <section key={label}>
+            <h3>{label}</h3>
+            {items.length ? items.slice(0, 4).map(item => (
+              <ProgrammeRow key={`${label}-${programmeKey(item.programme)}`} item={item} onSelect={() => onSelect(item)} />
+            )) : <p>No picks.</p>}
+          </section>
+        ))}
+      </div>
+    </SimpleModal>
+  )
+}
+
+function LeanBackModal({ selected, channel, onClose, onLookup, onToggleWatch, tagged }) {
+  if (!selected) return null
+  return (
+    <div className="lean-back" role="dialog" aria-modal="true">
+      {selected.image ? <img src={selected.image} alt="" /> : null}
+      <button className="icon-button lean-close" onClick={onClose} aria-label="Close TV mode"><X size={18} /></button>
+      <div className="lean-copy">
+        <p>{channel?.number ? `${channel.number} · ` : ''}{channel?.name || selected.channelId} · {formatTime(selected.start)} - {formatTime(selected.stop)}</p>
+        <h2>{selected.title}</h2>
+        {selected.subtitle ? <h3>{selected.subtitle}</h3> : null}
+        <p>{selected.desc || 'No description available.'}</p>
+        <div className="lean-actions">
+          <button onClick={onToggleWatch}>{tagged ? 'Added' : 'Add'}</button>
+          {selected.media?.type ? <button onClick={onLookup}>Score</button> : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SimpleModal({ title, eyebrow, onClose, children }) {
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <section className="simple-modal" role="dialog" aria-modal="true" aria-labelledby={`modal-${title}`} onClick={event => event.stopPropagation()}>
+        <header className="programme-modal-header">
+          <div>
+            <p className="eyebrow">{eyebrow}</p>
+            <h2 id={`modal-${title}`}>{title}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} aria-label={`Close ${title}`}><X size={18} /></button>
+        </header>
+        {children}
+      </section>
+    </div>
+  )
+}
+
+function ProgrammeRow({ item, onSelect }) {
+  return (
+    <button className="programme-row" onClick={onSelect}>
+      <span>{formatTime(item.programme.start)}</span>
+      <strong>{item.programme.title}</strong>
+      <em>{item.channel?.number ? `${item.channel.number} · ` : ''}{item.channel?.name || item.programme.channelId}</em>
+      <b>{item.score}/10</b>
+    </button>
   )
 }
 
